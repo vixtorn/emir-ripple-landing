@@ -1,0 +1,1 @@
+export default function HeroHeader() { const links = ["Work", "Index", "About", "Blog"]; return <header className="hero-header"><a className="brand" href="#top">Emir Duman.</a><nav aria-label="Primary navigation">{links.map((link) => <a href="#top" key={link}>{link}</a>)}</nav><a href="#top">Contact</a></header>; }

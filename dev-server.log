@@ -1,0 +1,152 @@
+
+> emir-ripple-landing@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.12 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.10.100.56:3000
+✓ Ready in 414ms
+
+ GET / 200 in 336ms (next.js: 135ms, application-code: 201ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 24ms (next.js: 4ms, application-code: 21ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 25ms (next.js: 3ms, application-code: 22ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 26ms (next.js: 3ms, application-code: 23ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 27ms (next.js: 2ms, application-code: 25ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 26ms (next.js: 3ms, application-code: 23ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 42ms (next.js: 8ms, application-code: 34ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+⨯ ./src/components/hero/RippleScene.tsx:7:1
+Module not found: Can't resolve './RipplePlane'
+  [90m 5 |[0m [36mimport[0m { [33mTextureLoader[0m } [36mfrom[0m [32m"three"[0m;
+  [90m 6 |[0m [36mimport[0m { configureColorTexture } [36mfrom[0m [32m"@/lib/trail-canvas"[0m;
+[31m[1m>[0m [90m 7 |[0m [36mimport[0m [33mRipplePlane[0m [36mfrom[0m [32m"./RipplePlane"[0m;
+  [90m   |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m 8 |[0m
+  [90m 9 |[0m [36mexport[0m [36mtype[0m [33mPointerData[0m = { u: number; v: number; active: boolean };
+  [90m10 |[0m [36mexport[0m [36mdefault[0m [36mfunction[0m [33mRippleScene[0m({ pointer, onReady }: { pointer: [33mReact[0m.[33mMutableRefObjec.[0m.[33m.[0m
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/components/hero/RippleScene.tsx [Client Component Browser]
+    ./src/components/hero/RippleCanvas.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/components/hero/RippleScene.tsx [Client Component SSR]
+    ./src/components/hero/RippleCanvas.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+⨯ ./src/components/hero/RippleScene.tsx:7:1
+Module not found: Can't resolve './RipplePlane'
+  [90m 5 |[0m [36mimport[0m { [33mTextureLoader[0m } [36mfrom[0m [32m"three"[0m;
+  [90m 6 |[0m [36mimport[0m { configureColorTexture } [36mfrom[0m [32m"@/lib/trail-canvas"[0m;
+[31m[1m>[0m [90m 7 |[0m [36mimport[0m [33mRipplePlane[0m [36mfrom[0m [32m"./RipplePlane"[0m;
+  [90m   |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m 8 |[0m
+  [90m 9 |[0m [36mexport[0m [36mtype[0m [33mPointerData[0m = { u: number; v: number; active: boolean };
+  [90m10 |[0m [36mexport[0m [36mdefault[0m [36mfunction[0m [33mRippleScene[0m({ pointer, onReady }: { pointer: [33mReact[0m.[33mMutableRefObjec.[0m.[33m.[0m
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/components/hero/RippleScene.tsx [Client Component Browser]
+    ./src/components/hero/RippleCanvas.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/components/hero/RippleScene.tsx [Client Component SSR]
+    ./src/components/hero/RippleCanvas.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+⨯ ./src/components/hero/RippleScene.tsx:7:1
+Module not found: Can't resolve './RipplePlane'
+  [90m 5 |[0m [36mimport[0m { [33mTextureLoader[0m } [36mfrom[0m [32m"three"[0m;
+  [90m 6 |[0m [36mimport[0m { configureColorTexture } [36mfrom[0m [32m"@/lib/trail-canvas"[0m;
+[31m[1m>[0m [90m 7 |[0m [36mimport[0m [33mRipplePlane[0m [36mfrom[0m [32m"./RipplePlane"[0m;
+  [90m   |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m 8 |[0m
+  [90m 9 |[0m [36mexport[0m [36mtype[0m [33mPointerData[0m = { u: number; v: number; active: boolean };
+  [90m10 |[0m [36mexport[0m [36mdefault[0m [36mfunction[0m [33mRippleScene[0m({ pointer, onReady }: { pointer: [33mReact[0m.[33mMutableRefObjec.[0m.[33m.[0m
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/components/hero/RippleScene.tsx [Client Component Browser]
+    ./src/components/hero/RippleCanvas.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/components/hero/RippleScene.tsx [Client Component SSR]
+    ./src/components/hero/RippleCanvas.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+⨯ ./src/components/hero/RippleScene.tsx:7:1
+Module not found: Can't resolve './RipplePlane'
+  [90m 5 |[0m [36mimport[0m { [33mTextureLoader[0m } [36mfrom[0m [32m"three"[0m;
+  [90m 6 |[0m [36mimport[0m { configureColorTexture } [36mfrom[0m [32m"@/lib/trail-canvas"[0m;
+[31m[1m>[0m [90m 7 |[0m [36mimport[0m [33mRipplePlane[0m [36mfrom[0m [32m"./RipplePlane"[0m;
+  [90m   |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m 8 |[0m
+  [90m 9 |[0m [36mexport[0m [36mtype[0m [33mPointerData[0m = { u: number; v: number; active: boolean };
+  [90m10 |[0m [36mexport[0m [36mdefault[0m [36mfunction[0m [33mRippleScene[0m({ pointer, onReady }: { pointer: [33mReact[0m.[33mMutableRefObjec.[0m.[33m.[0m
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/components/hero/RippleScene.tsx [Client Component Browser]
+    ./src/components/hero/RippleCanvas.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Client Component Browser]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/components/hero/RippleScene.tsx [Client Component SSR]
+    ./src/components/hero/RippleCanvas.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Client Component SSR]
+    ./src/components/hero/RippleHero.tsx [Server Component]
+    ./src/app/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+✓ Compiled in 48ms
+ GET / 200 in 143ms (next.js: 40ms, application-code: 103ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 30ms (next.js: 4ms, application-code: 26ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 44ms (next.js: 6ms, application-code: 38ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
+ GET / 200 in 35ms (next.js: 3ms, application-code: 32ms)
+[browser] THREE.Clock: This module has been deprecated. Please use THREE.Timer instead. (file://C:/Users/Emir Duman/Desktop/Emir Projeler/emir-ripple-landing/.next/dev/static/chunks/node_modules_next_dist_1ybzpk2._.js:2489:13)
