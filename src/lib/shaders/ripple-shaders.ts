@@ -12,6 +12,10 @@ uniform sampler2D uHelmetTexture;
 uniform sampler2D uTrailTexture;
 uniform sampler2D uMetaballField;
 uniform vec2 uMetaballFieldTexelSize;
+uniform float uMetaballFieldBackend;
+uniform float uMetaballFieldDebugExposure;
+uniform float uMetaballHeightBaseThreshold;
+uniform float uMetaballHeightCompression;
 uniform float uRevealMode;
 uniform float uDebugCompareRevealModes;
 uniform float uMetaballDebugView;
@@ -29,19 +33,31 @@ uniform vec3 uMetaballPrimaryHighlight;
 uniform vec3 uMetaballSecondaryHighlight;
 varying vec2 vUv;
 
+float sampleField(vec2 uv) {
+  vec4 fieldSample = texture2D(uMetaballField, uv);
+  return mix(fieldSample.a, fieldSample.r, uMetaballFieldBackend);
+}
+
 float heightFromField(float density) {
-  float surfaceFloor = max(0.0, uMetaballThreshold - uMetaballSoftness);
-  float normalizedHeight = clamp(
-    (density - surfaceFloor) / max(1.0 - surfaceFloor, 0.0001),
+  float canvasSurfaceFloor = max(0.0, uMetaballThreshold - uMetaballSoftness);
+  float canvasNormalizedHeight = clamp(
+    (density - canvasSurfaceFloor) / max(1.0 - canvasSurfaceFloor, 0.0001),
     0.0,
     1.0
   );
-  return normalizedHeight * normalizedHeight * (3.0 - 2.0 * normalizedHeight);
+  float canvasHeight = canvasNormalizedHeight * canvasNormalizedHeight
+    * (3.0 - 2.0 * canvasNormalizedHeight);
+  float aboveThreshold = max(density - uMetaballHeightBaseThreshold, 0.0);
+  float gpuHeight = aboveThreshold / max(
+    aboveThreshold + uMetaballHeightCompression,
+    0.0001
+  );
+  return mix(canvasHeight, gpuHeight, uMetaballFieldBackend);
 }
 
 void main() {
   float classicMask = clamp(texture2D(uTrailTexture, vUv).r, 0.0, 1.0);
-  float rawFieldValue = texture2D(uMetaballField, vUv).a;
+  float rawFieldValue = sampleField(vUv);
   float metaballMask = smoothstep(
     uMetaballThreshold - uMetaballSoftness,
     uMetaballThreshold + uMetaballSoftness,
@@ -49,22 +65,18 @@ void main() {
   );
   float metaballHeight = heightFromField(rawFieldValue);
 
-  float leftHeight = heightFromField(texture2D(
-    uMetaballField,
+  float leftHeight = heightFromField(sampleField(
     vUv - vec2(uMetaballFieldTexelSize.x, 0.0)
-  ).a);
-  float rightHeight = heightFromField(texture2D(
-    uMetaballField,
+  ));
+  float rightHeight = heightFromField(sampleField(
     vUv + vec2(uMetaballFieldTexelSize.x, 0.0)
-  ).a);
-  float bottomHeight = heightFromField(texture2D(
-    uMetaballField,
+  ));
+  float bottomHeight = heightFromField(sampleField(
     vUv - vec2(0.0, uMetaballFieldTexelSize.y)
-  ).a);
-  float topHeight = heightFromField(texture2D(
-    uMetaballField,
+  ));
+  float topHeight = heightFromField(sampleField(
     vUv + vec2(0.0, uMetaballFieldTexelSize.y)
-  ).a);
+  ));
   float dx = rightHeight - leftHeight;
   float dy = topHeight - bottomHeight;
   vec3 surfaceNormal = normalize(vec3(
@@ -92,7 +104,6 @@ void main() {
     uHelmetTexture,
     mix(vUv, refractedUv, metaballMode)
   );
-  vec4 portrait = mix(base, helmet, revealMask);
 
   vec3 viewDirection = vec3(0.0, 0.0, 1.0);
   float diffuse = max(dot(surfaceNormal, uMetaballLightDirection), 0.0);
@@ -104,22 +115,33 @@ void main() {
     1.0 - max(dot(surfaceNormal, viewDirection), 0.0),
     uMetaballFresnelPower
   );
-  vec3 surfaceLight =
-    uMetaballPrimaryHighlight * (
-      diffuse * uMetaballDiffuseStrength +
-      specular * uMetaballSpecularStrength
-    ) +
+  float diffuseMultiplier = 1.0
+    + (diffuse - 0.5) * uMetaballDiffuseStrength;
+  vec3 additiveHighlights =
+    uMetaballPrimaryHighlight * specular * uMetaballSpecularStrength +
     uMetaballSecondaryHighlight * fresnel * uMetaballFresnelStrength;
-  float lightingInfluence = metaballMode * metaballMask * portrait.a;
-  portrait.rgb = clamp(
-    portrait.rgb + surfaceLight * lightingInfluence * (1.0 - portrait.rgb),
+  vec3 shadedHelmet = clamp(
+    helmet.rgb * diffuseMultiplier + additiveHighlights,
     0.0,
     1.0
   );
+  vec4 classicPortrait = mix(base, helmet, classicMask);
+  vec4 metaballPortrait = mix(
+    base,
+    vec4(shadedHelmet, helmet.a),
+    metaballMask
+  );
+  vec4 portrait = mix(classicPortrait, metaballPortrait, metaballMode);
+  vec3 lightingOnly =
+    vec3(diffuse * uMetaballDiffuseStrength) +
+    additiveHighlights;
 
   vec4 outputColor = portrait;
   if (uMetaballDebugView > 0.5 && uMetaballDebugView < 1.5) {
-    outputColor = vec4(vec3(rawFieldValue), 1.0);
+    float displayDensity = 1.0 - exp(
+      -rawFieldValue * uMetaballFieldDebugExposure
+    );
+    outputColor = vec4(vec3(displayDensity), 1.0);
   } else if (uMetaballDebugView < 2.5 && uMetaballDebugView > 1.5) {
     outputColor = vec4(vec3(metaballMask), 1.0);
   } else if (uMetaballDebugView < 3.5 && uMetaballDebugView > 2.5) {
@@ -128,7 +150,7 @@ void main() {
     vec3 normalColor = surfaceNormal * 0.5 + 0.5;
     outputColor = vec4(normalColor * metaballMask, 1.0);
   } else if (uMetaballDebugView < 5.5 && uMetaballDebugView > 4.5) {
-    outputColor = vec4(clamp(surfaceLight * metaballMask, 0.0, 1.0), 1.0);
+    outputColor = vec4(clamp(lightingOnly * metaballMask, 0.0, 1.0), 1.0);
   }
 
   gl_FragColor = outputColor;

@@ -4,6 +4,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2, Vector3 } from "three";
 import { metaballDebugViews, rippleConfig } from "@/lib/ripple-config";
+import { createGpuMetaballField, disposeGpuMetaballField, renderGpuMetaballField, setGpuMetaballSplat } from "@/lib/metaball-gpu-field";
 import { rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
 import { containedSize, markTextureForUpdate, prepareMetaballFieldBrush, prepareTrailBrush, resizeMetaballField, resizeTrail, stampMetaballField, stampTrail, textureDimensions, type TrailPoint } from "@/lib/trail-canvas";
 import type { PointerData } from "./RippleScene";
@@ -63,7 +64,7 @@ function pointAlpha(point: TrailPoint, nowMs: number) {
 }
 
 export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { baseTexture: Texture; helmetTexture: Texture; pointer: React.MutableRefObject<PointerData> }) {
-  const { viewport } = useThree();
+  const { gl, viewport } = useThree();
   const baseDimensions = textureDimensions(baseTexture);
   const imageAspect = baseDimensions.width / baseDimensions.height;
   const trailCanvas = useMemo(() => document.createElement("canvas"), []);
@@ -84,6 +85,20 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     texture.generateMipmaps = false;
     return texture;
   }, [metaballFieldCanvas]);
+  const gpuMetaballField = useMemo(
+    () => rippleConfig.metaballFieldBackend === "gpuHalfFloat"
+      ? createGpuMetaballField(gl, imageAspect)
+      : null,
+    [gl, imageAspect],
+  );
+  const useGpuMetaballField = rippleConfig.metaballFieldBackend === "gpuHalfFloat"
+    && gpuMetaballField !== null;
+  const activeMetaballFieldTexture = gpuMetaballField?.target.texture
+    ?? metaballFieldTexture;
+  const activeMetaballFieldWidth = gpuMetaballField?.width
+    ?? Math.round(rippleConfig.metaballFieldResolution * imageAspect);
+  const activeMetaballFieldHeight = gpuMetaballField?.height
+    ?? rippleConfig.metaballFieldResolution;
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const metaballFieldContext = useRef<CanvasRenderingContext2D | null>(null);
   const revealModeUniform = useRef({ value: rippleConfig.revealMode === "metaball" ? 1 : 0 });
@@ -95,8 +110,12 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uBaseTexture: { value: baseTexture },
       uHelmetTexture: { value: helmetTexture },
       uTrailTexture: { value: trailTexture },
-      uMetaballField: { value: metaballFieldTexture },
-      uMetaballFieldTexelSize: { value: new Vector2(1 / Math.round(rippleConfig.metaballFieldResolution * imageAspect), 1 / rippleConfig.metaballFieldResolution) },
+      uMetaballField: { value: activeMetaballFieldTexture },
+      uMetaballFieldTexelSize: { value: new Vector2(1 / activeMetaballFieldWidth, 1 / activeMetaballFieldHeight) },
+      uMetaballFieldBackend: { value: useGpuMetaballField ? 1 : 0 },
+      uMetaballFieldDebugExposure: { value: rippleConfig.metaballFieldDebugExposure },
+      uMetaballHeightBaseThreshold: { value: rippleConfig.metaballHeightBaseThreshold },
+      uMetaballHeightCompression: { value: rippleConfig.metaballHeightCompression },
       uRevealMode: { value: rippleConfig.revealMode === "metaball" ? 1 : 0 },
       uDebugCompareRevealModes: { value: rippleConfig.debugCompareRevealModes ? 1 : 0 },
       uMetaballDebugView: { value: metaballDebugViews[metaballDebugView] },
@@ -113,7 +132,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMetaballPrimaryHighlight: { value: new Color(rippleConfig.metaballPrimaryHighlight) },
       uMetaballSecondaryHighlight: { value: new Color(rippleConfig.metaballSecondaryHighlight) },
     },
-  }), [baseTexture, helmetTexture, imageAspect, metaballFieldTexture, trailTexture]);
+  }), [activeMetaballFieldHeight, activeMetaballFieldTexture, activeMetaballFieldWidth, baseTexture, helmetTexture, trailTexture, useGpuMetaballField]);
   const lifecycle = useRef({
     canvasHasMask: false,
     fieldHasDensity: false,
@@ -139,13 +158,17 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
   }, [imageAspect, metaballFieldBrush, metaballFieldCanvas, metaballFieldTexture, pointer, trailBrush, trailCanvas, trailPoints, trailTexture]);
   useEffect(() => {
     revealModeUniform.current = material.uniforms.uRevealMode;
-    revealModeUniform.current.value = rippleConfig.revealMode === "metaball" && metaballFieldContext.current ? 1 : 0;
+    revealModeUniform.current.value = rippleConfig.revealMode === "metaball"
+      && (useGpuMetaballField || Boolean(metaballFieldContext.current))
+      ? 1
+      : 0;
     return () => {
       trailTexture.dispose();
       metaballFieldTexture.dispose();
+      if (gpuMetaballField) disposeGpuMetaballField(gpuMetaballField);
       material.dispose();
     };
-  }, [material, metaballFieldTexture, trailTexture]);
+  }, [gpuMetaballField, material, metaballFieldTexture, trailTexture, useGpuMetaballField]);
   useEffect(() => {
     const clearHiddenFields = () => {
       if (!document.hidden) return;
@@ -153,6 +176,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       const fieldContext = metaballFieldContext.current;
       trailContext?.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
       fieldContext?.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
+      if (gpuMetaballField) renderGpuMetaballField(gl, gpuMetaballField, 0);
       markTextureForUpdate(trailTexture);
       markTextureForUpdate(metaballFieldTexture);
       lifecycle.current.canvasHasMask = false;
@@ -160,14 +184,15 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     };
     document.addEventListener("visibilitychange", clearHiddenFields);
     return () => document.removeEventListener("visibilitychange", clearHiddenFields);
-  }, [metaballFieldCanvas, metaballFieldTexture, trailCanvas, trailTexture]);
+  }, [gl, gpuMetaballField, metaballFieldCanvas, metaballFieldTexture, trailCanvas, trailTexture]);
 
   useFrame(() => {
     const ctx = context.current;
     if (!ctx) return;
     const fieldCtx = metaballFieldContext.current;
-    const metaballEnabled = rippleConfig.revealMode === "metaball" && Boolean(fieldCtx);
-    const compareModes = rippleConfig.debugCompareRevealModes && Boolean(fieldCtx);
+    const metaballFieldAvailable = useGpuMetaballField || Boolean(fieldCtx);
+    const metaballEnabled = rippleConfig.revealMode === "metaball" && metaballFieldAvailable;
+    const compareModes = rippleConfig.debugCompareRevealModes && metaballFieldAvailable;
     const debugClassic = metaballDebugView === "classic";
     const debugMetaballStage = metaballDebugView !== "final" && !debugClassic;
     revealModeUniform.current.value = metaballEnabled ? 1 : 0;
@@ -223,9 +248,13 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
         markTextureForUpdate(trailTexture);
         trail.canvasHasMask = false;
       }
-      if (trail.fieldHasDensity && fieldCtx) {
-        fieldCtx.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
-        markTextureForUpdate(metaballFieldTexture);
+      if (trail.fieldHasDensity) {
+        if (useGpuMetaballField && gpuMetaballField) {
+          renderGpuMetaballField(gl, gpuMetaballField, 0);
+        } else if (fieldCtx) {
+          fieldCtx.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
+          markTextureForUpdate(metaballFieldTexture);
+        }
         trail.fieldHasDensity = false;
       }
       return;
@@ -248,7 +277,29 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       trail.canvasHasMask = false;
     }
 
-    if (drawMetaballField && fieldCtx) {
+    if (drawMetaballField && useGpuMetaballField && gpuMetaballField) {
+      const firstFieldPointIndex = debugMetaballSinglePoint ? trailPoints.count - 1 : 0;
+      let instanceCount = 0;
+      for (let index = firstFieldPointIndex; index < trailPoints.count; index += 1) {
+        const point = trailPoints.at(index);
+        if (!point) continue;
+        const alpha = pointAlpha(point, nowMs);
+        if (alpha >= rippleConfig.metaballVisibilityCutoff) {
+          setGpuMetaballSplat(
+            gpuMetaballField,
+            instanceCount,
+            point.x / trailCanvas.width,
+            1 - point.y / trailCanvas.height,
+            point.radius / trailCanvas.width,
+            point.radius / trailCanvas.height,
+            alpha * rippleConfig.metaballFieldStrength,
+          );
+          instanceCount += 1;
+        }
+      }
+      renderGpuMetaballField(gl, gpuMetaballField, instanceCount);
+      trail.fieldHasDensity = true;
+    } else if (drawMetaballField && fieldCtx) {
       fieldCtx.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
       fieldCtx.globalCompositeOperation = "lighter";
       const positionScaleX = metaballFieldCanvas.width / trailCanvas.width;
@@ -266,9 +317,13 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       fieldCtx.globalCompositeOperation = "source-over";
       markTextureForUpdate(metaballFieldTexture);
       trail.fieldHasDensity = true;
-    } else if (trail.fieldHasDensity && fieldCtx) {
-      fieldCtx.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
-      markTextureForUpdate(metaballFieldTexture);
+    } else if (trail.fieldHasDensity) {
+      if (useGpuMetaballField && gpuMetaballField) {
+        renderGpuMetaballField(gl, gpuMetaballField, 0);
+      } else if (fieldCtx) {
+        fieldCtx.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
+        markTextureForUpdate(metaballFieldTexture);
+      }
       trail.fieldHasDensity = false;
     }
   });
