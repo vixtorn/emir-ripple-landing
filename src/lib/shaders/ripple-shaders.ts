@@ -10,175 +10,150 @@ export const rippleFragmentShader = /* glsl */ `
 uniform sampler2D uBaseTexture;
 uniform sampler2D uHelmetTexture;
 uniform sampler2D uTrailTexture;
-uniform vec3 uEdgePrimary;
-uniform vec3 uEdgeHighlight;
-uniform vec3 uEdgeAccent;
-uniform vec3 uGradientDark;
-uniform vec3 uGradientPurple;
-uniform vec3 uGradientPink;
-uniform vec3 uGradientLight;
-uniform vec3 uGradientMapStops;
-uniform float uGradientMapEnabled;
-uniform float uGradientMapMix;
-uniform float uGradientMapPhase;
-uniform float uGradientMapScale;
-uniform float uGradientMapFlowSpeed;
-uniform float uGradientMapDriftAmount;
-uniform vec2 uTrailTexelSize;
-uniform float uMaskBlurRadiusPx;
-uniform float uEdgeThreshold;
-uniform float uEdgeWidth;
-uniform float uEdgeStrength;
-uniform float uAuraWidth;
-uniform float uAuraStrength;
-uniform float uAuraVioletMix;
-uniform float uNoiseScale;
-uniform float uNoiseSpeed;
-uniform float uNoiseAmount;
-uniform float uDistortionStrength;
-uniform float uAuraDistortionInfluence;
-uniform float uChromaticOffset;
-uniform float uChromaticStrength;
-uniform float uChromaticAuraInfluence;
-uniform float uEdgeFlowSpeed;
-uniform vec2 uEdgeFlowFrequency;
-uniform float uEdgeHighlightSharpness;
-uniform float uTime;
+uniform sampler2D uMetaballField;
+uniform vec2 uMetaballFieldTexelSize;
+uniform float uMetaballFieldBackend;
+uniform float uMetaballFieldDebugExposure;
+uniform float uMetaballHeightBaseThreshold;
+uniform float uMetaballHeightCompression;
+uniform float uRevealMode;
+uniform float uDebugCompareRevealModes;
+uniform float uMetaballDebugView;
+uniform float uMetaballThreshold;
+uniform float uMetaballSoftness;
+uniform float uMetaballNormalStrength;
+uniform vec3 uMetaballLightDirection;
+uniform float uMetaballDiffuseStrength;
+uniform float uMetaballSpecularStrength;
+uniform float uMetaballSpecularPower;
+uniform float uMetaballFresnelStrength;
+uniform float uMetaballFresnelPower;
+uniform float uMetaballRefractionStrength;
+uniform vec3 uMetaballPrimaryHighlight;
+uniform vec3 uMetaballSecondaryHighlight;
 varying vec2 vUv;
 
-float random2d(vec2 position) {
-  return fract(sin(dot(position, vec2(127.1, 311.7))) * 43758.5453);
+float sampleField(vec2 uv) {
+  vec4 fieldSample = texture2D(uMetaballField, uv);
+  return mix(fieldSample.a, fieldSample.r, uMetaballFieldBackend);
 }
 
-float smoothNoise(vec2 position) {
-  vec2 cell = floor(position);
-  vec2 local = fract(position);
-  vec2 curve = local * local * (3.0 - 2.0 * local);
-  float bottom = mix(random2d(cell), random2d(cell + vec2(1.0, 0.0)), curve.x);
-  float top = mix(random2d(cell + vec2(0.0, 1.0)), random2d(cell + vec2(1.0, 1.0)), curve.x);
-  return mix(bottom, top, curve.y);
-}
-
-float fluidNoise(vec2 position) {
-  float value = 0.0;
-  float amplitude = 0.5;
-  for (int octave = 0; octave < 3; octave++) {
-    value += smoothNoise(position) * amplitude;
-    position = position * 2.03 + vec2(17.1, 9.2);
-    amplitude *= 0.5;
-  }
-  return value;
-}
-
-vec3 gradientMap(float luminance) {
-  if (luminance < uGradientMapStops.x) return uGradientDark;
-  if (luminance < uGradientMapStops.y) {
-    float progress = (luminance - uGradientMapStops.x) / (uGradientMapStops.y - uGradientMapStops.x);
-    return mix(uGradientDark, uGradientPurple, progress);
-  }
-  if (luminance < uGradientMapStops.z) {
-    float progress = (luminance - uGradientMapStops.y) / (uGradientMapStops.z - uGradientMapStops.y);
-    return mix(uGradientPurple, uGradientPink, progress);
-  }
-  float progress = (luminance - uGradientMapStops.z) / (1.0 - uGradientMapStops.z);
-  return mix(uGradientPink, uGradientLight, clamp(progress, 0.0, 1.0));
-}
-
-void main() {
-  float trailMask = clamp(texture2D(uTrailTexture, vUv).r, 0.0, 1.0);
-  vec2 maskOffset = uTrailTexelSize * uMaskBlurRadiusPx;
-  float maskLeft = texture2D(uTrailTexture, vUv - vec2(maskOffset.x, 0.0)).r;
-  float maskRight = texture2D(uTrailTexture, vUv + vec2(maskOffset.x, 0.0)).r;
-  float maskBottom = texture2D(uTrailTexture, vUv - vec2(0.0, maskOffset.y)).r;
-  float maskTop = texture2D(uTrailTexture, vUv + vec2(0.0, maskOffset.y)).r;
-  float maskBottomLeft = texture2D(uTrailTexture, vUv - maskOffset).r;
-  float maskTopRight = texture2D(uTrailTexture, vUv + maskOffset).r;
-  float maskTopLeft = texture2D(uTrailTexture, vUv + vec2(-maskOffset.x, maskOffset.y)).r;
-  float maskBottomRight = texture2D(uTrailTexture, vUv + vec2(maskOffset.x, -maskOffset.y)).r;
-  float visualMask =
-    trailMask * 0.20 +
-    (maskLeft + maskRight + maskBottom + maskTop) * 0.12 +
-    (maskBottomLeft + maskTopRight + maskTopLeft + maskBottomRight) * 0.08;
-
-  float edgeOuter = smoothstep(uEdgeThreshold - uEdgeWidth, uEdgeThreshold, visualMask);
-  float edgeInner = smoothstep(uEdgeThreshold, uEdgeThreshold + uEdgeWidth, visualMask);
-  float edgeBand = clamp(edgeOuter - edgeInner, 0.0, 1.0);
-  float auraOuter = smoothstep(uEdgeThreshold - uAuraWidth, uEdgeThreshold, visualMask);
-  float auraInner = smoothstep(uEdgeThreshold, uEdgeThreshold + uAuraWidth, visualMask);
-  float auraBand = clamp(auraOuter - auraInner, 0.0, 1.0);
-
-  vec2 animatedNoiseUv = vUv * uNoiseScale + vec2(uTime * uNoiseSpeed, -uTime * uNoiseSpeed * 0.7);
-  vec2 fluidOffset = vec2(
-    fluidNoise(animatedNoiseUv),
-    fluidNoise(animatedNoiseUv + vec2(5.2, 1.7))
-  ) * 2.0 - 1.0;
-  fluidOffset *= uNoiseAmount;
-  float displacementInfluence = clamp(
-    edgeBand + auraBand * uAuraDistortionInfluence,
+float heightFromField(float density) {
+  float canvasSurfaceFloor = max(0.0, uMetaballThreshold - uMetaballSoftness);
+  float canvasNormalizedHeight = clamp(
+    (density - canvasSurfaceFloor) / max(1.0 - canvasSurfaceFloor, 0.0001),
     0.0,
     1.0
   );
-  vec2 helmetUv = clamp(
-    vUv + fluidOffset * uDistortionStrength * displacementInfluence,
+  float canvasHeight = canvasNormalizedHeight * canvasNormalizedHeight
+    * (3.0 - 2.0 * canvasNormalizedHeight);
+  float aboveThreshold = max(density - uMetaballHeightBaseThreshold, 0.0);
+  float gpuHeight = aboveThreshold / max(
+    aboveThreshold + uMetaballHeightCompression,
+    0.0001
+  );
+  return mix(canvasHeight, gpuHeight, uMetaballFieldBackend);
+}
+
+void main() {
+  float classicMask = clamp(texture2D(uTrailTexture, vUv).r, 0.0, 1.0);
+  float rawFieldValue = sampleField(vUv);
+  float metaballMask = smoothstep(
+    uMetaballThreshold - uMetaballSoftness,
+    uMetaballThreshold + uMetaballSoftness,
+    rawFieldValue
+  );
+  float metaballHeight = heightFromField(rawFieldValue);
+
+  float leftHeight = heightFromField(sampleField(
+    vUv - vec2(uMetaballFieldTexelSize.x, 0.0)
+  ));
+  float rightHeight = heightFromField(sampleField(
+    vUv + vec2(uMetaballFieldTexelSize.x, 0.0)
+  ));
+  float bottomHeight = heightFromField(sampleField(
+    vUv - vec2(0.0, uMetaballFieldTexelSize.y)
+  ));
+  float topHeight = heightFromField(sampleField(
+    vUv + vec2(0.0, uMetaballFieldTexelSize.y)
+  ));
+  float dx = rightHeight - leftHeight;
+  float dy = topHeight - bottomHeight;
+  vec3 surfaceNormal = normalize(vec3(
+    -dx * uMetaballNormalStrength,
+    -dy * uMetaballNormalStrength,
+    1.0
+  ));
+
+  float metaballMode = uRevealMode;
+  if (uDebugCompareRevealModes > 0.5) {
+    metaballMode = step(0.5, vUv.x);
+  }
+  if (uMetaballDebugView > 5.5) {
+    metaballMode = 0.0;
+  }
+  float revealMask = mix(classicMask, metaballMask, metaballMode);
+  vec2 refractedUv = clamp(
+    vUv + surfaceNormal.xy * uMetaballRefractionStrength * metaballMask,
     vec2(0.0),
     vec2(1.0)
   );
 
-  vec2 maskGradient = vec2(maskRight - maskLeft, maskTop - maskBottom);
-  vec2 maskNormal = maskGradient / max(length(maskGradient), 0.0001);
-  float chromaticInfluence = clamp(
-    edgeBand + auraBand * uChromaticAuraInfluence,
-    0.0,
-    1.0
-  ) * uChromaticStrength;
-  vec2 chromaticUvOffset = maskNormal * uChromaticOffset;
-
   vec4 base = texture2D(uBaseTexture, vUv);
-  vec4 helmet = texture2D(uHelmetTexture, helmetUv);
-  vec3 aberratedHelmet = vec3(
-    texture2D(uHelmetTexture, clamp(helmetUv + chromaticUvOffset, vec2(0.0), vec2(1.0))).r,
-    helmet.g,
-    texture2D(uHelmetTexture, clamp(helmetUv - chromaticUvOffset, vec2(0.0), vec2(1.0))).b
+  vec4 helmet = texture2D(
+    uHelmetTexture,
+    mix(vUv, refractedUv, metaballMode)
   );
-  helmet.rgb = mix(helmet.rgb, aberratedHelmet, chromaticInfluence);
 
-  float helmetLuminance = dot(helmet.rgb, vec3(0.2126, 0.7152, 0.0722));
-  float gradientDrift = sin(uTime * uGradientMapFlowSpeed + uGradientMapPhase) * uGradientMapDriftAmount;
-  float mappedLuminance = clamp(
-    (helmetLuminance - 0.5) * uGradientMapScale + 0.5 + gradientDrift,
+  vec3 viewDirection = vec3(0.0, 0.0, 1.0);
+  float diffuse = max(dot(surfaceNormal, uMetaballLightDirection), 0.0);
+  float specular = pow(
+    max(dot(reflect(-uMetaballLightDirection, surfaceNormal), viewDirection), 0.0),
+    uMetaballSpecularPower
+  );
+  float fresnel = pow(
+    1.0 - max(dot(surfaceNormal, viewDirection), 0.0),
+    uMetaballFresnelPower
+  );
+  float diffuseMultiplier = 1.0
+    + (diffuse - 0.5) * uMetaballDiffuseStrength;
+  vec3 additiveHighlights =
+    uMetaballPrimaryHighlight * specular * uMetaballSpecularStrength +
+    uMetaballSecondaryHighlight * fresnel * uMetaballFresnelStrength;
+  vec3 shadedHelmet = clamp(
+    helmet.rgb * diffuseMultiplier + additiveHighlights,
     0.0,
     1.0
   );
-  vec3 mappedHelmet = gradientMap(mappedLuminance);
-  helmet.rgb = mix(
-    helmet.rgb,
-    mappedHelmet,
-    uGradientMapMix * uGradientMapEnabled
+  vec4 classicPortrait = mix(base, helmet, classicMask);
+  vec4 metaballPortrait = mix(
+    base,
+    vec4(shadedHelmet, helmet.a),
+    metaballMask
   );
+  vec4 portrait = mix(classicPortrait, metaballPortrait, metaballMode);
+  vec3 lightingOnly =
+    vec3(diffuse * uMetaballDiffuseStrength) +
+    additiveHighlights;
 
-  vec4 portrait = mix(base, helmet, trailMask);
-  float edgeNoise = fluidNoise(animatedNoiseUv + vec2(2.4, 8.1));
-  float edgeFlow = sin(
-    dot(vUv, uEdgeFlowFrequency) + uTime * uEdgeFlowSpeed + edgeNoise
-  ) * 0.5 + 0.5;
-  vec3 edgeColor = mix(uEdgePrimary, uEdgeAccent, edgeFlow);
-  float cyanHighlight = pow(
-    max(0.0, 1.0 - abs(edgeFlow * 2.0 - 1.0)),
-    uEdgeHighlightSharpness
-  );
-  edgeColor = mix(edgeColor, uEdgeHighlight, cyanHighlight);
-  vec3 auraColor = mix(uEdgePrimary, uEdgeAccent, uAuraVioletMix);
+  vec4 outputColor = portrait;
+  if (uMetaballDebugView > 0.5 && uMetaballDebugView < 1.5) {
+    float displayDensity = 1.0 - exp(
+      -rawFieldValue * uMetaballFieldDebugExposure
+    );
+    outputColor = vec4(vec3(displayDensity), 1.0);
+  } else if (uMetaballDebugView < 2.5 && uMetaballDebugView > 1.5) {
+    outputColor = vec4(vec3(metaballMask), 1.0);
+  } else if (uMetaballDebugView < 3.5 && uMetaballDebugView > 2.5) {
+    outputColor = vec4(vec3(metaballHeight), 1.0);
+  } else if (uMetaballDebugView < 4.5 && uMetaballDebugView > 3.5) {
+    vec3 normalColor = surfaceNormal * 0.5 + 0.5;
+    outputColor = vec4(normalColor * metaballMask, 1.0);
+  } else if (uMetaballDebugView < 5.5 && uMetaballDebugView > 4.5) {
+    outputColor = vec4(clamp(lightingOnly * metaballMask, 0.0, 1.0), 1.0);
+  }
 
-  vec3 colorContribution =
-    edgeColor * edgeBand * uEdgeStrength +
-    auraColor * auraBand * uAuraStrength;
-  portrait.rgb = clamp(
-    portrait.rgb + colorContribution * portrait.a * (1.0 - portrait.rgb),
-    0.0,
-    1.0
-  );
-
-  gl_FragColor = portrait;
+  gl_FragColor = outputColor;
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
