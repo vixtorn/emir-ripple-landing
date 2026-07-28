@@ -6,6 +6,17 @@ export const portraitAssets = {
 const trailPointHoldMs = 100;
 const trailPointFadeMs = 1700;
 
+
+export const metaballDebugViews = {
+  final: 0,
+  field: 1,
+  mask: 2,
+  height: 3,
+  normal: 4,
+  lighting: 5,
+  classic: 6,
+} as const;
+
 export const rippleConfig = {
   trailResolution: 768,
   radius: 0.09,
@@ -37,5 +48,7 @@ export const rippleConfig = {
   metaballSecondaryHighlight: "#5EC8FF",
   metaballVisibilityCutoff: 0.0003,
   debugCompareRevealModes: false,
+  metaballDebugView: "final" as keyof typeof metaballDebugViews,
+  debugMetaballSinglePoint: false,
   maxDpr: 1.5,
 } as const;

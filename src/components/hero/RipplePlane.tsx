@@ -3,10 +3,16 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2, Vector3 } from "three";
-import { rippleConfig } from "@/lib/ripple-config";
+import { metaballDebugViews, rippleConfig } from "@/lib/ripple-config";
 import { rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
 import { containedSize, markTextureForUpdate, prepareMetaballFieldBrush, prepareTrailBrush, resizeMetaballField, resizeTrail, stampMetaballField, stampTrail, textureDimensions, type TrailPoint } from "@/lib/trail-canvas";
 import type { PointerData } from "./RippleScene";
+
+const metaballDebugView = process.env.NODE_ENV === "development"
+  ? rippleConfig.metaballDebugView
+  : "final";
+const debugMetaballSinglePoint = process.env.NODE_ENV === "development"
+  && rippleConfig.debugMetaballSinglePoint;
 
 class TrailPointRingBuffer {
   private readonly points: Array<TrailPoint | undefined>;
@@ -93,6 +99,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMetaballFieldTexelSize: { value: new Vector2(1 / Math.round(rippleConfig.metaballFieldResolution * imageAspect), 1 / rippleConfig.metaballFieldResolution) },
       uRevealMode: { value: rippleConfig.revealMode === "metaball" ? 1 : 0 },
       uDebugCompareRevealModes: { value: rippleConfig.debugCompareRevealModes ? 1 : 0 },
+      uMetaballDebugView: { value: metaballDebugViews[metaballDebugView] },
       uMetaballThreshold: { value: rippleConfig.metaballThreshold },
       uMetaballSoftness: { value: rippleConfig.metaballSoftness },
       uMetaballNormalStrength: { value: rippleConfig.metaballNormalStrength },
@@ -161,9 +168,11 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     const fieldCtx = metaballFieldContext.current;
     const metaballEnabled = rippleConfig.revealMode === "metaball" && Boolean(fieldCtx);
     const compareModes = rippleConfig.debugCompareRevealModes && Boolean(fieldCtx);
+    const debugClassic = metaballDebugView === "classic";
+    const debugMetaballStage = metaballDebugView !== "final" && !debugClassic;
     revealModeUniform.current.value = metaballEnabled ? 1 : 0;
-    const drawClassicMask = !metaballEnabled || compareModes;
-    const drawMetaballField = metaballEnabled || compareModes;
+    const drawClassicMask = !metaballEnabled || compareModes || debugClassic;
+    const drawMetaballField = (metaballEnabled && !debugClassic) || compareModes || debugMetaballStage;
     const trail = lifecycle.current;
     const currentPointer = pointer.current;
     if (currentPointer.movementId !== trail.lastMovementId) {
@@ -244,7 +253,8 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       fieldCtx.globalCompositeOperation = "lighter";
       const positionScaleX = metaballFieldCanvas.width / trailCanvas.width;
       const positionScaleY = metaballFieldCanvas.height / trailCanvas.height;
-      for (let index = 0; index < trailPoints.count; index += 1) {
+      const firstFieldPointIndex = debugMetaballSinglePoint ? trailPoints.count - 1 : 0;
+      for (let index = firstFieldPointIndex; index < trailPoints.count; index += 1) {
         const point = trailPoints.at(index);
         if (!point) continue;
         const alpha = pointAlpha(point, nowMs);
