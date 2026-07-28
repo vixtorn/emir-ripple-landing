@@ -52,6 +52,31 @@ uniform vec3 uMercuryMidColor;
 uniform vec3 uMercuryPrimaryHighlight;
 uniform vec3 uMercurySecondaryHighlight;
 uniform float uMercuryDebugView;
+#ifdef USE_MERCURY_SURFACE_POLISH
+uniform float uMercuryThicknessGain;
+uniform float uMercuryThicknessLow;
+uniform float uMercuryThicknessHigh;
+uniform vec3 uMercuryEnvironmentDark;
+uniform vec3 uMercuryEnvironmentMid;
+uniform vec3 uMercuryEnvironmentFloor;
+uniform float uMercuryOverheadSoftboxStrength;
+uniform float uMercurySidePanelStrength;
+uniform float uMercuryStripLightStrength;
+uniform float uMercuryFloorBounceStrength;
+uniform float uMercuryHorizonStrength;
+uniform float uMercuryBroadSpecularStrength;
+uniform float uMercuryBroadSpecularPower;
+uniform float uMercurySharpSpecularStrength;
+uniform float uMercurySharpSpecularPower;
+uniform vec3 uMercurySharpLightDirection;
+uniform float uMercuryCurvatureStrength;
+uniform float uMercuryCurvatureLow;
+uniform float uMercuryCurvatureHigh;
+uniform float uMercuryThinFresnelBoost;
+uniform float uMercuryMicroReflectionStrength;
+uniform float uMercuryEdgeRefractionStrength;
+uniform float uMercurySurfaceDebugView;
+#endif
 #endif
 uniform float uMetaballHeightBaseThreshold;
 uniform float uMetaballHeightCompression;
@@ -165,6 +190,54 @@ vec3 proceduralStudioReflection(vec3 reflectionDirection) {
     + uMercurySecondaryHighlight * horizonGlow * 0.1;
   return min(environment, vec3(0.94));
 }
+
+#ifdef USE_MERCURY_SURFACE_POLISH
+vec3 buildPolishedStudioEnvironment(vec3 reflectionDirection) {
+  vec3 direction = normalize(reflectionDirection);
+  float overheadSoftbox = smoothstep(0.06, 0.74, direction.y)
+    * (1.0 - smoothstep(0.32, 0.9, abs(direction.x)));
+  float broadSidePanel = (
+    1.0 - smoothstep(0.18, 0.72, abs(direction.x + 0.28))
+  ) * smoothstep(-0.62, 0.48, direction.y);
+  float leftStrip = (
+    1.0 - smoothstep(0.02, 0.11, abs(direction.x + 0.74))
+  ) * smoothstep(-0.52, 0.48, direction.y);
+  float rightStrip = (
+    1.0 - smoothstep(0.02, 0.1, abs(direction.x - 0.7))
+  ) * smoothstep(-0.46, 0.52, direction.y);
+  float floorBounce = 1.0 - smoothstep(
+    -0.72,
+    -0.12,
+    direction.y
+  );
+  float horizon = 1.0 - smoothstep(
+    0.035,
+    0.34,
+    abs(direction.y + 0.055)
+  );
+
+  vec3 environment = uMercuryEnvironmentDark
+    + uMercuryPrimaryHighlight
+      * overheadSoftbox
+      * uMercuryOverheadSoftboxStrength
+    + uMercuryEnvironmentMid
+      * broadSidePanel
+      * uMercurySidePanelStrength
+    + uMercuryPrimaryHighlight
+      * leftStrip
+      * uMercuryStripLightStrength
+    + uMercurySecondaryHighlight
+      * rightStrip
+      * uMercuryStripLightStrength
+    + uMercuryEnvironmentFloor
+      * floorBounce
+      * uMercuryFloorBounceStrength
+    + uMercurySecondaryHighlight
+      * horizon
+      * uMercuryHorizonStrength;
+  return min(environment, vec3(0.92));
+}
+#endif
 #endif
 
 float heightFromField(float density) {
@@ -292,6 +365,130 @@ void main() {
     -viewDirection,
     mercuryNormal
   );
+#ifdef USE_MERCURY_SURFACE_POLISH
+  float densityAboveShell = max(
+    rawFieldValue - uMercuryHeightBaseThreshold,
+    0.0
+  );
+  float mercuryThicknessRaw = 1.0 - exp(
+    -densityAboveShell * uMercuryThicknessGain
+  );
+  float mercuryThickness = smoothstep(
+    uMercuryThicknessLow,
+    uMercuryThicknessHigh,
+    mercuryThicknessRaw
+  );
+  vec3 mercuryBodyColor = mix(
+    uMercuryMidColor,
+    uMercuryDarkColor,
+    mercuryThickness
+  );
+  vec3 mercuryEnvironment = buildPolishedStudioEnvironment(
+    mercuryReflectionDirection
+  );
+#ifdef USE_MERCURY_MICRO_REFLECTION
+  float microReflection = sin(
+    (vUv.x + vUv.y) * 18.0
+      + rawFieldValue * 2.0
+      + mercuryHeight * 4.0
+  );
+  mercuryEnvironment *= 1.0
+    + microReflection * uMercuryMicroReflectionStrength;
+#endif
+  vec3 mercuryBase = mix(
+    mercuryBodyColor,
+    mercuryEnvironment,
+    uMercuryReflectionStrength
+  );
+  float broadSpecular = pow(
+    max(
+      dot(
+        reflect(-uMetaballLightDirection, mercuryNormal),
+        viewDirection
+      ),
+      0.0
+    ),
+    uMercuryBroadSpecularPower
+  );
+  float sharpSpecular = pow(
+    max(
+      dot(
+        reflect(-uMercurySharpLightDirection, mercuryNormal),
+        viewDirection
+      ),
+      0.0
+    ),
+    uMercurySharpSpecularPower
+  );
+  float mercuryCurvature = abs(
+    mercuryLeftHeight
+      + mercuryRightHeight
+      + mercuryTopHeight
+      + mercuryBottomHeight
+      - 4.0 * mercuryHeight
+  );
+  float curvatureHighlight = smoothstep(
+    uMercuryCurvatureLow,
+    uMercuryCurvatureHigh,
+    mercuryCurvature
+  );
+  float mercuryFresnel = pow(
+    1.0 - max(dot(mercuryNormal, viewDirection), 0.0),
+    uMercuryFresnelPower
+  );
+  float thicknessFresnelModulation = mix(
+    uMercuryThinFresnelBoost,
+    1.0,
+    mercuryThickness
+  );
+  float finalMercuryFresnel = mercuryFresnel
+    * thicknessFresnelModulation
+    * uMercuryFresnelStrength;
+  vec3 mercuryColor = min(
+    mercuryBase
+      + uMercuryPrimaryHighlight
+        * broadSpecular
+        * uMercuryBroadSpecularStrength
+      + uMercuryPrimaryHighlight
+        * sharpSpecular
+        * uMercurySharpSpecularStrength
+      + uMercuryPrimaryHighlight
+        * curvatureHighlight
+        * uMercuryCurvatureStrength
+      + uMercurySecondaryHighlight
+        * finalMercuryFresnel,
+    vec3(0.94)
+  );
+  float shellTransitionBand = mercuryShellMask
+    * (1.0 - mercuryShellMask)
+    * 4.0;
+#ifdef USE_MERCURY_EDGE_REFRACTION
+  vec2 mercuryEdgeUv = clamp(
+    vUv
+      + mercuryNormal.xy
+        * uMercuryEdgeRefractionStrength
+        * shellTransitionBand,
+    vec2(0.0),
+    vec2(1.0)
+  );
+  vec3 baseAtMercuryEdge = texture2D(
+    uBaseTexture,
+    mercuryEdgeUv
+  ).rgb;
+  vec3 shellBaseColor = mix(
+    base.rgb,
+    baseAtMercuryEdge,
+    shellTransitionBand
+  );
+#else
+  vec3 shellBaseColor = base.rgb;
+#endif
+  vec3 baseWithShell = mix(
+    shellBaseColor,
+    mercuryColor,
+    mercuryShellOnly * uMercuryShellOpacity
+  );
+#else
   vec3 mercuryEnvironment = proceduralStudioReflection(
     mercuryReflectionDirection
   );
@@ -346,6 +543,7 @@ void main() {
     mercuryColor,
     mercuryShellOnly * uMercuryShellOpacity
   );
+#endif
   vec3 helmetCore = mix(
     baseWithShell,
     shadedHelmet,
@@ -447,6 +645,65 @@ void main() {
       mix(base.a, helmet.a, mercuryCoreMask)
     );
   }
+#ifdef USE_MERCURY_SURFACE_POLISH
+  if (
+    uMercurySurfaceDebugView > 0.5
+    && uMercurySurfaceDebugView < 1.5
+  ) {
+    outputColor = vec4(
+      vec3(mercuryThickness * mercuryShellMask),
+      1.0
+    );
+  } else if (
+    uMercurySurfaceDebugView > 1.5
+    && uMercurySurfaceDebugView < 2.5
+  ) {
+    outputColor = vec4(
+      mercuryEnvironment * mercuryShellMask,
+      1.0
+    );
+  } else if (
+    uMercurySurfaceDebugView > 2.5
+    && uMercurySurfaceDebugView < 3.5
+  ) {
+    outputColor = vec4(
+      vec3(broadSpecular * mercuryShellMask),
+      1.0
+    );
+  } else if (
+    uMercurySurfaceDebugView > 3.5
+    && uMercurySurfaceDebugView < 4.5
+  ) {
+    outputColor = vec4(
+      vec3(sharpSpecular * mercuryShellMask),
+      1.0
+    );
+  } else if (
+    uMercurySurfaceDebugView > 4.5
+    && uMercurySurfaceDebugView < 5.5
+  ) {
+    outputColor = vec4(
+      vec3(curvatureHighlight * mercuryShellMask),
+      1.0
+    );
+  } else if (
+    uMercurySurfaceDebugView > 5.5
+    && uMercurySurfaceDebugView < 6.5
+  ) {
+    outputColor = vec4(
+      vec3(finalMercuryFresnel * mercuryShellMask),
+      1.0
+    );
+  } else if (
+    uMercurySurfaceDebugView > 6.5
+    && uMercurySurfaceDebugView < 7.5
+  ) {
+    outputColor = vec4(
+      mercuryColor * mercuryShellMask,
+      1.0
+    );
+  }
+#endif
 #endif
 
   gl_FragColor = outputColor;
@@ -461,7 +718,7 @@ export function compileMercuryShaderWithFallback(
   material: ShaderMaterial,
 ) {
   const previousShaderErrorHandler = renderer.debug.onShaderError;
-  let mercuryShaderFailed = false;
+  let mercuryShaderVariantFailed = false;
   renderer.debug.onShaderError = (
     context,
     program,
@@ -470,12 +727,23 @@ export function compileMercuryShaderWithFallback(
   ) => {
     const fragmentSource = context.getShaderSource(fragmentShader) ?? "";
     if (
-      fragmentSource.includes("USE_MERCURY_SHELL")
+      fragmentSource.includes(
+        "#define USE_MERCURY_SURFACE_POLISH 1",
+      )
+      && material.defines?.USE_MERCURY_SURFACE_POLISH
+    ) {
+      delete material.defines.USE_MERCURY_SURFACE_POLISH;
+      material.needsUpdate = true;
+      mercuryShaderVariantFailed = true;
+      return;
+    }
+    if (
+      fragmentSource.includes("#define USE_MERCURY_SHELL 1")
       && material.defines
     ) {
       delete material.defines.USE_MERCURY_SHELL;
       material.needsUpdate = true;
-      mercuryShaderFailed = true;
+      mercuryShaderVariantFailed = true;
       return;
     }
     previousShaderErrorHandler?.(
@@ -490,5 +758,5 @@ export function compileMercuryShaderWithFallback(
   } finally {
     renderer.debug.onShaderError = previousShaderErrorHandler;
   }
-  if (mercuryShaderFailed) renderer.compile(scene, camera);
+  if (mercuryShaderVariantFailed) renderer.compile(scene, camera);
 }

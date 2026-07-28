@@ -3,7 +3,7 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2, Vector3 } from "three";
-import { mercuryDebugViews, metaballDebugViews, rippleConfig, temporalDebugViews } from "@/lib/ripple-config";
+import { mercuryDebugViews, mercurySurfaceDebugViews, metaballDebugViews, rippleConfig, temporalDebugViews } from "@/lib/ripple-config";
 import { createGpuMetaballField, disposeGpuMetaballField, renderGpuMetaballField, setGpuMetaballSplat } from "@/lib/metaball-gpu-field";
 import { compileMercuryShaderWithFallback, rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
 import { clearTemporalMetaballField, createTemporalMetaballField, disposeTemporalMetaballField, renderTemporalMetaballField } from "@/lib/temporal-metaball-field";
@@ -20,6 +20,9 @@ const temporalDebugView = process.env.NODE_ENV === "development"
   : "final";
 const mercuryDebugView = process.env.NODE_ENV === "development"
   ? rippleConfig.mercuryDebugView
+  : "final";
+const mercurySurfaceDebugView = process.env.NODE_ENV === "development"
+  ? rippleConfig.mercurySurfaceDebugView
   : "final";
 
 class TrailPointRingBuffer {
@@ -151,6 +154,12 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     && temporalMetaballField !== null;
   const useMercuryShell = rippleConfig.mercuryShellEnabled
     && useGpuMetaballField;
+  const useMercurySurfacePolish = useMercuryShell
+    && rippleConfig.mercurySurfacePolishEnabled;
+  const useMercuryMicroReflection = useMercurySurfacePolish
+    && rippleConfig.mercuryMicroReflectionStrength > 0;
+  const useMercuryEdgeRefraction = useMercurySurfacePolish
+    && rippleConfig.mercuryEdgeRefractionStrength > 0;
   const initialMetaballFieldTexture = useTemporalMetaballField
     ? temporalMetaballField.currentTarget.texture
     : sourceMetaballFieldTexture;
@@ -162,7 +171,18 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
   const temporalVelocityUniform = useRef({ value: new Vector2() });
   const material = useMemo(() => new ShaderMaterial({
     transparent: true,
-    defines: useMercuryShell ? { USE_MERCURY_SHELL: 1 } : undefined,
+    defines: useMercuryShell ? {
+      USE_MERCURY_SHELL: 1,
+      ...(useMercurySurfacePolish
+        ? { USE_MERCURY_SURFACE_POLISH: 1 }
+        : {}),
+      ...(useMercuryMicroReflection
+        ? { USE_MERCURY_MICRO_REFLECTION: 1 }
+        : {}),
+      ...(useMercuryEdgeRefraction
+        ? { USE_MERCURY_EDGE_REFRACTION: 1 }
+        : {}),
+    } : undefined,
     vertexShader: rippleVertexShader,
     fragmentShader: rippleFragmentShader,
     uniforms: {
@@ -203,6 +223,29 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMercuryPrimaryHighlight: { value: new Color(rippleConfig.mercuryPrimaryHighlight) },
       uMercurySecondaryHighlight: { value: new Color(rippleConfig.mercurySecondaryHighlight) },
       uMercuryDebugView: { value: mercuryDebugViews[mercuryDebugView] },
+      uMercuryThicknessGain: { value: rippleConfig.mercuryThicknessGain },
+      uMercuryThicknessLow: { value: rippleConfig.mercuryThicknessLow },
+      uMercuryThicknessHigh: { value: rippleConfig.mercuryThicknessHigh },
+      uMercuryEnvironmentDark: { value: new Color(rippleConfig.mercuryEnvironmentDark) },
+      uMercuryEnvironmentMid: { value: new Color(rippleConfig.mercuryEnvironmentMid) },
+      uMercuryEnvironmentFloor: { value: new Color(rippleConfig.mercuryEnvironmentFloor) },
+      uMercuryOverheadSoftboxStrength: { value: rippleConfig.mercuryOverheadSoftboxStrength },
+      uMercurySidePanelStrength: { value: rippleConfig.mercurySidePanelStrength },
+      uMercuryStripLightStrength: { value: rippleConfig.mercuryStripLightStrength },
+      uMercuryFloorBounceStrength: { value: rippleConfig.mercuryFloorBounceStrength },
+      uMercuryHorizonStrength: { value: rippleConfig.mercuryHorizonStrength },
+      uMercuryBroadSpecularStrength: { value: rippleConfig.mercuryBroadSpecularStrength },
+      uMercuryBroadSpecularPower: { value: rippleConfig.mercuryBroadSpecularPower },
+      uMercurySharpSpecularStrength: { value: rippleConfig.mercurySharpSpecularStrength },
+      uMercurySharpSpecularPower: { value: rippleConfig.mercurySharpSpecularPower },
+      uMercurySharpLightDirection: { value: new Vector3(rippleConfig.mercurySharpLightDirection.x, rippleConfig.mercurySharpLightDirection.y, rippleConfig.mercurySharpLightDirection.z).normalize() },
+      uMercuryCurvatureStrength: { value: rippleConfig.mercuryCurvatureStrength },
+      uMercuryCurvatureLow: { value: rippleConfig.mercuryCurvatureLow },
+      uMercuryCurvatureHigh: { value: rippleConfig.mercuryCurvatureHigh },
+      uMercuryThinFresnelBoost: { value: rippleConfig.mercuryThinFresnelBoost },
+      uMercuryMicroReflectionStrength: { value: rippleConfig.mercuryMicroReflectionStrength },
+      uMercuryEdgeRefractionStrength: { value: rippleConfig.mercuryEdgeRefractionStrength },
+      uMercurySurfaceDebugView: { value: mercurySurfaceDebugViews[mercurySurfaceDebugView] },
       uMetaballHeightBaseThreshold: { value: rippleConfig.metaballHeightBaseThreshold },
       uMetaballHeightCompression: { value: rippleConfig.metaballHeightCompression },
       uRevealMode: { value: rippleConfig.revealMode === "metaball" ? 1 : 0 },
@@ -221,7 +264,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMetaballPrimaryHighlight: { value: new Color(rippleConfig.metaballPrimaryHighlight) },
       uMetaballSecondaryHighlight: { value: new Color(rippleConfig.metaballSecondaryHighlight) },
     },
-  }), [baseTexture, helmetTexture, initialMetaballFieldTexture, sourceMetaballFieldHeight, sourceMetaballFieldTexture, sourceMetaballFieldWidth, trailTexture, useGpuMetaballField, useMercuryShell]);
+  }), [baseTexture, helmetTexture, initialMetaballFieldTexture, sourceMetaballFieldHeight, sourceMetaballFieldTexture, sourceMetaballFieldWidth, trailTexture, useGpuMetaballField, useMercuryEdgeRefraction, useMercuryMicroReflection, useMercuryShell, useMercurySurfacePolish]);
   const lifecycle = useRef({
     canvasHasMask: false,
     fieldHasDensity: false,
@@ -344,13 +387,16 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     const debugTemporalStage = temporalDebugView !== "final";
     const debugMercuryStage = mercuryDebugView !== "final"
       && useMercuryShell;
+    const debugMercurySurfaceStage = mercurySurfaceDebugView !== "final"
+      && useMercurySurfacePolish;
     revealModeUniform.current.value = metaballEnabled ? 1 : 0;
     const drawClassicMask = !metaballEnabled || compareModes || debugClassic;
     const drawMetaballField = (metaballEnabled && !debugClassic)
       || compareModes
       || debugMetaballStage
       || debugTemporalStage
-      || debugMercuryStage;
+      || debugMercuryStage
+      || debugMercurySurfaceStage;
     const trail = lifecycle.current;
     const currentPointer = pointer.current;
     const nowMs = performance.now();
