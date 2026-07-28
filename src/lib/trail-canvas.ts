@@ -2,6 +2,14 @@ import type { Texture } from "three";
 import { SRGBColorSpace } from "three";
 import { rippleConfig } from "./ripple-config";
 
+export type TrailPoint = {
+  x: number;
+  y: number;
+  createdAtMs: number;
+  radius: number;
+  strength: number;
+};
+
 export function configureColorTexture(texture: Texture) { texture.colorSpace = SRGBColorSpace; texture.needsUpdate = true; }
 export function textureDimensions(texture: Texture) { const image = texture.image as HTMLImageElement; return { width: image.naturalWidth || image.width, height: image.naturalHeight || image.height }; }
 export function containedSize(containerWidth: number, containerHeight: number, imageAspect: number) {
@@ -32,6 +40,9 @@ export function prepareTrailBrush(canvas: HTMLCanvasElement, radius: number) {
   context.fillStyle = gradient;
   context.fillRect(0, 0, size, size);
 }
-export function fadeTrail(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, amount: number) { ctx.save(); ctx.globalCompositeOperation = "destination-out"; ctx.fillStyle = `rgba(0,0,0,${amount})`; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore(); }
-export function stampTrail(ctx: CanvasRenderingContext2D, brush: HTMLCanvasElement, x: number, y: number) { ctx.drawImage(brush, x - brush.width / 2, y - brush.height / 2); }
+export function stampTrail(ctx: CanvasRenderingContext2D, brush: HTMLCanvasElement, point: TrailPoint, alpha: number) {
+  const diameter = point.radius * 2;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(brush, point.x - point.radius, point.y - point.radius, diameter, diameter);
+}
 export function markTextureForUpdate(texture: Texture) { texture.needsUpdate = true; }

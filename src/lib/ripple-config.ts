@@ -3,17 +3,20 @@ export const portraitAssets = {
   helmetTexture: "/images/hero/emir-helmet-wide-v2.png",
 } as const;
 
+const trailPointHoldMs = 100;
+const trailPointFadeMs = 1700;
+
 export const rippleConfig = {
   trailResolution: 768,
   radius: 0.09,
   hardness: 0.18,
-  // Exponential mask decay rate, in inverse seconds.
-  trailDecayRatePerSecond: 5.5,
-  // Break interpolation when real pointer movements are farther apart than this.
+  trailPointHoldMs,
+  trailPointFadeMs,
+  trailPointLifetimeMs: trailPointHoldMs + trailPointFadeMs,
   trailIdleTimeoutMs: 250,
-  // Minimum real pointer movement in normalized portrait UV units.
   trailMovementEpsilon: 0.0005,
-  // Remaining mask visibility below this value is cleared completely.
+  trailInterpolationSpacingPx: 48,
+  maxTrailPoints: 1024,
   trailVisibilityCutoff: 0.0003,
   maxDpr: 1.5,
 } as const;

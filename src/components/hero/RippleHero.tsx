@@ -65,6 +65,13 @@ export default function RippleHero() {
     pointer.current.active = false;
     lastInputPosition.current.initialized = false;
   }, []);
+  useEffect(() => {
+    const stopPaintingWhenHidden = () => {
+      if (document.hidden) endPointer();
+    };
+    document.addEventListener("visibilitychange", stopPaintingWhenHidden);
+    return () => document.removeEventListener("visibilitychange", stopPaintingWhenHidden);
+  }, [endPointer]);
   const syncTextureDimensions = useCallback((base: { width: number; height: number }, helmet: { width: number; height: number }) => {
     if (base.width > 0 && base.height > 0 && helmet.width > 0 && helmet.height > 0) {
       imageAspect.current = base.width / base.height;
