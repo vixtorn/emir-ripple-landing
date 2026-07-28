@@ -3,9 +3,10 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2, Vector3 } from "three";
-import { metaballDebugViews, rippleConfig } from "@/lib/ripple-config";
+import { metaballDebugViews, rippleConfig, temporalDebugViews } from "@/lib/ripple-config";
 import { createGpuMetaballField, disposeGpuMetaballField, renderGpuMetaballField, setGpuMetaballSplat } from "@/lib/metaball-gpu-field";
 import { rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
+import { clearTemporalMetaballField, createTemporalMetaballField, disposeTemporalMetaballField, renderTemporalMetaballField } from "@/lib/temporal-metaball-field";
 import { containedSize, markTextureForUpdate, prepareMetaballFieldBrush, prepareTrailBrush, resizeMetaballField, resizeTrail, stampMetaballField, stampTrail, textureDimensions, type TrailPoint } from "@/lib/trail-canvas";
 import type { PointerData } from "./RippleScene";
 
@@ -14,6 +15,9 @@ const metaballDebugView = process.env.NODE_ENV === "development"
   : "final";
 const debugMetaballSinglePoint = process.env.NODE_ENV === "development"
   && rippleConfig.debugMetaballSinglePoint;
+const temporalDebugView = process.env.NODE_ENV === "development"
+  ? rippleConfig.temporalDebugView
+  : "final";
 
 class TrailPointRingBuffer {
   private readonly points: Array<TrailPoint | undefined>;
@@ -63,6 +67,35 @@ function pointAlpha(point: TrailPoint, nowMs: number) {
   return point.strength * (1 - smoothProgress);
 }
 
+type TemporalMotion = {
+  previousU: number;
+  previousV: number;
+  rawU: number;
+  rawV: number;
+  smoothedU: number;
+  smoothedV: number;
+  speed: number;
+  lastMovementId: number;
+  hasPreviousPosition: boolean;
+  wasPointerActive: boolean;
+};
+
+function resetTemporalMotion(
+  motion: TemporalMotion,
+  movementId: number,
+) {
+  motion.previousU = 0;
+  motion.previousV = 0;
+  motion.rawU = 0;
+  motion.rawV = 0;
+  motion.smoothedU = 0;
+  motion.smoothedV = 0;
+  motion.speed = 0;
+  motion.lastMovementId = movementId;
+  motion.hasPreviousPosition = false;
+  motion.wasPointerActive = false;
+}
+
 export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { baseTexture: Texture; helmetTexture: Texture; pointer: React.MutableRefObject<PointerData> }) {
   const { gl, viewport } = useThree();
   const baseDimensions = textureDimensions(baseTexture);
@@ -93,15 +126,35 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
   );
   const useGpuMetaballField = rippleConfig.metaballFieldBackend === "gpuHalfFloat"
     && gpuMetaballField !== null;
-  const activeMetaballFieldTexture = gpuMetaballField?.target.texture
+  const sourceMetaballFieldTexture = gpuMetaballField?.target.texture
     ?? metaballFieldTexture;
-  const activeMetaballFieldWidth = gpuMetaballField?.width
+  const sourceMetaballFieldWidth = gpuMetaballField?.width
     ?? Math.round(rippleConfig.metaballFieldResolution * imageAspect);
-  const activeMetaballFieldHeight = gpuMetaballField?.height
+  const sourceMetaballFieldHeight = gpuMetaballField?.height
     ?? rippleConfig.metaballFieldResolution;
+  const temporalMetaballField = useMemo(
+    () => rippleConfig.temporalViscosityEnabled && gpuMetaballField
+      ? createTemporalMetaballField(
+        gl,
+        gpuMetaballField.target.texture,
+        gpuMetaballField.width,
+        gpuMetaballField.height,
+      )
+      : null,
+    [gl, gpuMetaballField],
+  );
+  const useTemporalMetaballField = rippleConfig.temporalViscosityEnabled
+    && useGpuMetaballField
+    && temporalMetaballField !== null;
+  const initialMetaballFieldTexture = useTemporalMetaballField
+    ? temporalMetaballField.currentTarget.texture
+    : sourceMetaballFieldTexture;
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const metaballFieldContext = useRef<CanvasRenderingContext2D | null>(null);
   const revealModeUniform = useRef({ value: rippleConfig.revealMode === "metaball" ? 1 : 0 });
+  const metaballFieldUniform = useRef({ value: initialMetaballFieldTexture });
+  const temporalPointerUvUniform = useRef({ value: new Vector2(0.5, 0.5) });
+  const temporalVelocityUniform = useRef({ value: new Vector2() });
   const material = useMemo(() => new ShaderMaterial({
     transparent: true,
     vertexShader: rippleVertexShader,
@@ -110,10 +163,19 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uBaseTexture: { value: baseTexture },
       uHelmetTexture: { value: helmetTexture },
       uTrailTexture: { value: trailTexture },
-      uMetaballField: { value: activeMetaballFieldTexture },
-      uMetaballFieldTexelSize: { value: new Vector2(1 / activeMetaballFieldWidth, 1 / activeMetaballFieldHeight) },
+      uMetaballField: { value: initialMetaballFieldTexture },
+      uTemporalSourceField: { value: sourceMetaballFieldTexture },
+      uMetaballFieldTexelSize: { value: new Vector2(1 / sourceMetaballFieldWidth, 1 / sourceMetaballFieldHeight) },
       uMetaballFieldBackend: { value: useGpuMetaballField ? 1 : 0 },
       uMetaballFieldDebugExposure: { value: rippleConfig.metaballFieldDebugExposure },
+      uTemporalFieldDebugExposure: { value: rippleConfig.temporalFieldDebugExposure },
+      uTemporalDebugView: { value: temporalDebugViews[temporalDebugView] },
+      uTemporalPointerUv: { value: new Vector2(0.5, 0.5) },
+      uTemporalVelocity: { value: new Vector2() },
+      uTemporalMaxVelocity: { value: rippleConfig.temporalMaxVelocity },
+      uTemporalVelocityInfluenceRadius: { value: rippleConfig.temporalVelocityInfluenceRadius },
+      uTemporalEnvelopeThreshold: { value: rippleConfig.temporalEnvelopeThreshold },
+      uTemporalEnvelopeSoftness: { value: rippleConfig.temporalEnvelopeSoftness },
       uMetaballHeightBaseThreshold: { value: rippleConfig.metaballHeightBaseThreshold },
       uMetaballHeightCompression: { value: rippleConfig.metaballHeightCompression },
       uRevealMode: { value: rippleConfig.revealMode === "metaball" ? 1 : 0 },
@@ -132,17 +194,37 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMetaballPrimaryHighlight: { value: new Color(rippleConfig.metaballPrimaryHighlight) },
       uMetaballSecondaryHighlight: { value: new Color(rippleConfig.metaballSecondaryHighlight) },
     },
-  }), [activeMetaballFieldHeight, activeMetaballFieldTexture, activeMetaballFieldWidth, baseTexture, helmetTexture, trailTexture, useGpuMetaballField]);
+  }), [baseTexture, helmetTexture, initialMetaballFieldTexture, sourceMetaballFieldHeight, sourceMetaballFieldTexture, sourceMetaballFieldWidth, trailTexture, useGpuMetaballField]);
   const lifecycle = useRef({
     canvasHasMask: false,
     fieldHasDensity: false,
+    temporalHasDensity: false,
+    temporalFailed: false,
     hasLastStamp: false,
     lastMovementId: 0,
     lastMovementTime: 0,
     lastStampU: 0,
     lastStampV: 0,
   });
+  const temporalMotion = useRef<TemporalMotion>({
+    previousU: 0,
+    previousV: 0,
+    rawU: 0,
+    rawV: 0,
+    smoothedU: 0,
+    smoothedV: 0,
+    speed: 0,
+    lastMovementId: pointer.current.movementId,
+    hasPreviousPosition: false,
+    wasPointerActive: false,
+  });
 
+  useEffect(() => {
+    revealModeUniform.current = material.uniforms.uRevealMode;
+    metaballFieldUniform.current = material.uniforms.uMetaballField;
+    temporalPointerUvUniform.current = material.uniforms.uTemporalPointerUv;
+    temporalVelocityUniform.current = material.uniforms.uTemporalVelocity;
+  }, [material]);
   useEffect(() => {
     context.current = resizeTrail(trailCanvas, imageAspect);
     metaballFieldContext.current = resizeMetaballField(metaballFieldCanvas, imageAspect);
@@ -151,13 +233,21 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     trailPoints.clear();
     lifecycle.current.canvasHasMask = false;
     lifecycle.current.fieldHasDensity = false;
+    lifecycle.current.temporalHasDensity = false;
+    lifecycle.current.temporalFailed = false;
     lifecycle.current.hasLastStamp = false;
     lifecycle.current.lastMovementId = pointer.current.movementId;
+    resetTemporalMotion(temporalMotion.current, pointer.current.movementId);
+    if (temporalMetaballField) {
+      clearTemporalMetaballField(gl, temporalMetaballField);
+      metaballFieldUniform.current.value = temporalMetaballField.currentTarget.texture;
+    } else {
+      metaballFieldUniform.current.value = sourceMetaballFieldTexture;
+    }
     markTextureForUpdate(trailTexture);
     markTextureForUpdate(metaballFieldTexture);
-  }, [imageAspect, metaballFieldBrush, metaballFieldCanvas, metaballFieldTexture, pointer, trailBrush, trailCanvas, trailPoints, trailTexture]);
+  }, [gl, imageAspect, metaballFieldBrush, metaballFieldCanvas, metaballFieldTexture, pointer, sourceMetaballFieldTexture, temporalMetaballField, trailBrush, trailCanvas, trailPoints, trailTexture]);
   useEffect(() => {
-    revealModeUniform.current = material.uniforms.uRevealMode;
     revealModeUniform.current.value = rippleConfig.revealMode === "metaball"
       && (useGpuMetaballField || Boolean(metaballFieldContext.current))
       ? 1
@@ -165,10 +255,11 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     return () => {
       trailTexture.dispose();
       metaballFieldTexture.dispose();
+      if (temporalMetaballField) disposeTemporalMetaballField(temporalMetaballField);
       if (gpuMetaballField) disposeGpuMetaballField(gpuMetaballField);
       material.dispose();
     };
-  }, [gpuMetaballField, material, metaballFieldTexture, trailTexture, useGpuMetaballField]);
+  }, [gpuMetaballField, material, metaballFieldTexture, temporalMetaballField, trailTexture, useGpuMetaballField]);
   useEffect(() => {
     const clearHiddenFields = () => {
       if (!document.hidden) return;
@@ -177,16 +268,40 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       trailContext?.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
       fieldContext?.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
       if (gpuMetaballField) renderGpuMetaballField(gl, gpuMetaballField, 0);
+      if (temporalMetaballField) {
+        clearTemporalMetaballField(gl, temporalMetaballField);
+        metaballFieldUniform.current.value = temporalMetaballField.currentTarget.texture;
+      }
       markTextureForUpdate(trailTexture);
       markTextureForUpdate(metaballFieldTexture);
       lifecycle.current.canvasHasMask = false;
       lifecycle.current.fieldHasDensity = false;
+      lifecycle.current.temporalHasDensity = false;
+      lifecycle.current.temporalFailed = false;
+      resetTemporalMotion(temporalMotion.current, pointer.current.movementId);
     };
     document.addEventListener("visibilitychange", clearHiddenFields);
     return () => document.removeEventListener("visibilitychange", clearHiddenFields);
-  }, [gl, gpuMetaballField, metaballFieldCanvas, metaballFieldTexture, trailCanvas, trailTexture]);
+  }, [gl, gpuMetaballField, metaballFieldCanvas, metaballFieldTexture, pointer, temporalMetaballField, trailCanvas, trailTexture]);
+  useEffect(() => {
+    const resetTemporalResources = () => {
+      resetTemporalMotion(temporalMotion.current, pointer.current.movementId);
+      if (!temporalMetaballField) return;
+      clearTemporalMetaballField(gl, temporalMetaballField);
+      metaballFieldUniform.current.value = temporalMetaballField.currentTarget.texture;
+      lifecycle.current.temporalHasDensity = false;
+      lifecycle.current.temporalFailed = false;
+    };
+    const canvas = gl.domElement;
+    window.addEventListener("resize", resetTemporalResources);
+    canvas.addEventListener("webglcontextrestored", resetTemporalResources);
+    return () => {
+      window.removeEventListener("resize", resetTemporalResources);
+      canvas.removeEventListener("webglcontextrestored", resetTemporalResources);
+    };
+  }, [gl, pointer, temporalMetaballField]);
 
-  useFrame(() => {
+  useFrame((_, frameDeltaSeconds) => {
     const ctx = context.current;
     if (!ctx) return;
     const fieldCtx = metaballFieldContext.current;
@@ -195,11 +310,127 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     const compareModes = rippleConfig.debugCompareRevealModes && metaballFieldAvailable;
     const debugClassic = metaballDebugView === "classic";
     const debugMetaballStage = metaballDebugView !== "final" && !debugClassic;
+    const debugTemporalStage = temporalDebugView !== "final";
     revealModeUniform.current.value = metaballEnabled ? 1 : 0;
     const drawClassicMask = !metaballEnabled || compareModes || debugClassic;
-    const drawMetaballField = (metaballEnabled && !debugClassic) || compareModes || debugMetaballStage;
+    const drawMetaballField = (metaballEnabled && !debugClassic)
+      || compareModes
+      || debugMetaballStage
+      || debugTemporalStage;
     const trail = lifecycle.current;
     const currentPointer = pointer.current;
+    const nowMs = performance.now();
+    const deltaSeconds = Number.isFinite(frameDeltaSeconds)
+      ? Math.min(Math.max(frameDeltaSeconds, 0), 1 / 15)
+      : 0;
+    const motion = temporalMotion.current;
+    const pointerCoordinatesValid = Number.isFinite(currentPointer.u)
+      && Number.isFinite(currentPointer.v)
+      && currentPointer.u >= 0
+      && currentPointer.u <= 1
+      && currentPointer.v >= 0
+      && currentPointer.v <= 1;
+    const pointerActive = currentPointer.active && pointerCoordinatesValid;
+    let hasNewVelocitySample = false;
+    let resetTemporalFeedback = false;
+
+    if (!pointerActive) {
+      if (motion.wasPointerActive || !pointerCoordinatesValid) {
+        resetTemporalMotion(motion, currentPointer.movementId);
+        resetTemporalFeedback = true;
+      } else {
+        motion.rawU = 0;
+        motion.rawV = 0;
+      }
+    } else {
+      if (!motion.wasPointerActive) {
+        motion.hasPreviousPosition = false;
+        motion.rawU = 0;
+        motion.rawV = 0;
+        motion.lastMovementId = currentPointer.movementId;
+      }
+
+      if (currentPointer.movementId !== motion.lastMovementId) {
+        motion.lastMovementId = currentPointer.movementId;
+        const movementIsFresh = nowMs - currentPointer.lastMovementTime
+          <= rippleConfig.trailIdleTimeoutMs;
+        if (movementIsFresh) {
+          if (motion.hasPreviousPosition) {
+            const velocityDeltaSeconds = Math.max(deltaSeconds, 1 / 240);
+            let rawU = (
+              currentPointer.u - motion.previousU
+            ) / velocityDeltaSeconds;
+            let rawV = (
+              currentPointer.v - motion.previousV
+            ) / velocityDeltaSeconds;
+            const rawSpeed = Math.hypot(rawU, rawV);
+            if (rawSpeed > rippleConfig.temporalMaxVelocity) {
+              const velocityScale = rippleConfig.temporalMaxVelocity / rawSpeed;
+              rawU *= velocityScale;
+              rawV *= velocityScale;
+            }
+            motion.rawU = rawU;
+            motion.rawV = rawV;
+            hasNewVelocitySample = true;
+          } else {
+            motion.rawU = 0;
+            motion.rawV = 0;
+          }
+          motion.previousU = currentPointer.u;
+          motion.previousV = currentPointer.v;
+          motion.hasPreviousPosition = true;
+        } else {
+          motion.hasPreviousPosition = false;
+          motion.rawU = 0;
+          motion.rawV = 0;
+        }
+      } else {
+        motion.rawU = 0;
+        motion.rawV = 0;
+      }
+
+      if (
+        nowMs - currentPointer.lastMovementTime
+        > rippleConfig.trailIdleTimeoutMs * 2
+      ) {
+        motion.hasPreviousPosition = false;
+      }
+    }
+
+    if (resetTemporalFeedback && temporalMetaballField) {
+      clearTemporalMetaballField(gl, temporalMetaballField);
+      trail.temporalHasDensity = false;
+    }
+
+    const velocitySmoothing = 1 - Math.exp(
+      -rippleConfig.temporalVelocitySmoothingPerSecond * deltaSeconds,
+    );
+    const targetVelocityU = hasNewVelocitySample ? motion.rawU : 0;
+    const targetVelocityV = hasNewVelocitySample ? motion.rawV : 0;
+    motion.smoothedU += (
+      targetVelocityU - motion.smoothedU
+    ) * velocitySmoothing;
+    motion.smoothedV += (
+      targetVelocityV - motion.smoothedV
+    ) * velocitySmoothing;
+    if (
+      !hasNewVelocitySample
+      && Math.hypot(motion.smoothedU, motion.smoothedV) < 0.0001
+    ) {
+      motion.smoothedU = 0;
+      motion.smoothedV = 0;
+    }
+    motion.speed = Math.hypot(motion.smoothedU, motion.smoothedV);
+    motion.wasPointerActive = pointerActive;
+    temporalPointerUvUniform.current.value.set(
+      currentPointer.u,
+      currentPointer.v,
+    );
+    temporalVelocityUniform.current.value.set(
+      motion.smoothedU,
+      motion.smoothedV,
+    );
+
     if (currentPointer.movementId !== trail.lastMovementId) {
       trail.lastMovementId = currentPointer.movementId;
       const nowMs = performance.now();
@@ -233,7 +464,6 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       }
     }
 
-    const nowMs = performance.now();
     let oldest = trailPoints.oldest();
     while (oldest) {
       const ageMs = nowMs - oldest.createdAtMs;
@@ -256,6 +486,13 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
           markTextureForUpdate(metaballFieldTexture);
         }
         trail.fieldHasDensity = false;
+      }
+      if (temporalMetaballField && trail.temporalHasDensity) {
+        clearTemporalMetaballField(gl, temporalMetaballField);
+        metaballFieldUniform.current.value = temporalMetaballField.currentTarget.texture;
+        trail.temporalHasDensity = false;
+      } else if (!useTemporalMetaballField) {
+        metaballFieldUniform.current.value = sourceMetaballFieldTexture;
       }
       return;
     }
@@ -299,6 +536,35 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       }
       renderGpuMetaballField(gl, gpuMetaballField, instanceCount);
       trail.fieldHasDensity = true;
+      if (
+        useTemporalMetaballField
+        && temporalMetaballField
+        && !trail.temporalFailed
+      ) {
+        const pointerRecentlyMoved = pointerActive
+          && nowMs - currentPointer.lastMovementTime
+            <= rippleConfig.trailIdleTimeoutMs;
+        try {
+          metaballFieldUniform.current.value = renderTemporalMetaballField(
+            gl,
+            temporalMetaballField,
+            gpuMetaballField.target.texture,
+            deltaSeconds,
+            currentPointer.u,
+            currentPointer.v,
+            motion.smoothedU,
+            motion.smoothedV,
+            pointerRecentlyMoved,
+          );
+          trail.temporalHasDensity = true;
+        } catch {
+          metaballFieldUniform.current.value = gpuMetaballField.target.texture;
+          trail.temporalHasDensity = false;
+          trail.temporalFailed = true;
+        }
+      } else {
+        metaballFieldUniform.current.value = gpuMetaballField.target.texture;
+      }
     } else if (drawMetaballField && fieldCtx) {
       fieldCtx.clearRect(0, 0, metaballFieldCanvas.width, metaballFieldCanvas.height);
       fieldCtx.globalCompositeOperation = "lighter";
@@ -317,6 +583,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       fieldCtx.globalCompositeOperation = "source-over";
       markTextureForUpdate(metaballFieldTexture);
       trail.fieldHasDensity = true;
+      metaballFieldUniform.current.value = metaballFieldTexture;
     } else if (trail.fieldHasDensity) {
       if (useGpuMetaballField && gpuMetaballField) {
         renderGpuMetaballField(gl, gpuMetaballField, 0);
@@ -325,6 +592,14 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
         markTextureForUpdate(metaballFieldTexture);
       }
       trail.fieldHasDensity = false;
+      if (temporalMetaballField && trail.temporalHasDensity) {
+        clearTemporalMetaballField(gl, temporalMetaballField);
+        trail.temporalHasDensity = false;
+      }
+      metaballFieldUniform.current.value = useTemporalMetaballField
+        && temporalMetaballField
+        ? temporalMetaballField.currentTarget.texture
+        : sourceMetaballFieldTexture;
     }
   });
 
