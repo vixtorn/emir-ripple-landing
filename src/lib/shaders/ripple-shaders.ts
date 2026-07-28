@@ -77,6 +77,25 @@ uniform float uMercuryMicroReflectionStrength;
 uniform float uMercuryEdgeRefractionStrength;
 uniform float uMercurySurfaceDebugView;
 #endif
+#ifdef USE_RAYMARCHED_MERCURY
+uniform sampler2D uRaymarchPrimitives;
+uniform float uRaymarchPrimitiveCount;
+uniform float uRaymarchPrimitiveTexelSize;
+uniform float uPortraitAspect;
+uniform float uRaymarchSmoothUnion;
+uniform float uRaymarchDepthScale;
+uniform float uRaymarchCameraDepth;
+uniform float uRaymarchNearDepth;
+uniform float uRaymarchFarDepth;
+uniform float uRaymarchHitEpsilon;
+uniform float uRaymarchNormalEpsilon;
+uniform float uRaymarchMinimumStep;
+uniform float uRaymarchMaximumStep;
+uniform float uRaymarchShellEarlyOut;
+uniform float uRaymarchBlend;
+uniform float uRaymarchVelocityBulgeStrength;
+uniform float uRaymarchDebugView;
+#endif
 #endif
 uniform float uMetaballHeightBaseThreshold;
 uniform float uMetaballHeightCompression;
@@ -236,6 +255,98 @@ vec3 buildPolishedStudioEnvironment(vec3 reflectionDirection) {
       * horizon
       * uMercuryHorizonStrength;
   return min(environment, vec3(0.92));
+}
+#endif
+#ifdef USE_RAYMARCHED_MERCURY
+vec2 raymarchLocalPosition(vec2 uv) {
+  return vec2(
+    (uv.x - 0.5) * uPortraitAspect,
+    uv.y - 0.5
+  );
+}
+
+float raymarchSphereDistance(vec3 point, vec3 center, float radius) {
+  return length(point - center) - radius;
+}
+
+float raymarchCapsuleDistance(
+  vec3 point,
+  vec3 start,
+  vec3 end,
+  float radius
+) {
+  vec3 segment = end - start;
+  float segmentLengthSquared = dot(segment, segment);
+  if (segmentLengthSquared < 0.0000001) {
+    return raymarchSphereDistance(point, start, radius);
+  }
+  float alongSegment = clamp(
+    dot(point - start, segment) / segmentLengthSquared,
+    0.0,
+    1.0
+  );
+  return length(point - (start + segment * alongSegment)) - radius;
+}
+
+float raymarchSmoothMinimum(float first, float second, float smoothing) {
+  if (smoothing <= 0.00001) return min(first, second);
+  float blend = max(smoothing - abs(first - second), 0.0) / smoothing;
+  return min(first, second) - blend * blend * smoothing * 0.25;
+}
+
+float raymarchSceneDistance(vec3 point) {
+  float compressedDepth = max(uRaymarchDepthScale, 0.001);
+  vec3 distancePoint = vec3(point.xy, point.z / compressedDepth);
+  float sceneDistance = 1000.0;
+
+  for (int segmentIndex = 0; segmentIndex < RAYMARCH_MAX_SEGMENTS; segmentIndex++) {
+    if (float(segmentIndex) >= uRaymarchPrimitiveCount) break;
+    float firstTexel = (float(segmentIndex * 2) + 0.5)
+      * uRaymarchPrimitiveTexelSize;
+    float secondTexel = firstTexel + uRaymarchPrimitiveTexelSize;
+    vec4 endpoints = texture2D(
+      uRaymarchPrimitives,
+      vec2(firstTexel, 0.5)
+    );
+    vec4 attributes = texture2D(
+      uRaymarchPrimitives,
+      vec2(secondTexel, 0.5)
+    );
+    if (attributes.z < 0.5) continue;
+
+    float radius = max(
+      attributes.x
+        * (1.0 + attributes.y * uRaymarchVelocityBulgeStrength),
+      0.0001
+    );
+    float primitiveDistance = raymarchCapsuleDistance(
+      distancePoint,
+      vec3(endpoints.xy, 0.0),
+      vec3(endpoints.zw, 0.0),
+      radius
+    ) * min(compressedDepth, 1.0);
+    sceneDistance = raymarchSmoothMinimum(
+      sceneDistance,
+      primitiveDistance,
+      uRaymarchSmoothUnion
+    );
+  }
+  return sceneDistance;
+}
+
+vec3 raymarchSceneNormal(vec3 point) {
+  float epsilon = max(uRaymarchNormalEpsilon, 0.0001);
+  vec2 offset = vec2(1.0, -1.0) * epsilon;
+  vec3 gradient =
+    offset.xyy * raymarchSceneDistance(point + offset.xyy)
+      + offset.yyx * raymarchSceneDistance(point + offset.yyx)
+      + offset.yxy * raymarchSceneDistance(point + offset.yxy)
+      + offset.xxx * raymarchSceneDistance(point + offset.xxx);
+  float gradientLengthSquared = dot(gradient, gradient);
+  if (!(gradientLengthSquared > 0.0000001)) {
+    return vec3(0.0, 0.0, 1.0);
+  }
+  return gradient * inversesqrt(gradientLengthSquared);
 }
 #endif
 #endif
@@ -544,6 +655,167 @@ void main() {
     mercuryShellOnly * uMercuryShellOpacity
   );
 #endif
+#ifdef USE_RAYMARCHED_MERCURY
+  vec2 raymarchLocalUv = raymarchLocalPosition(vUv);
+  vec3 raymarchOrigin = vec3(
+    raymarchLocalUv,
+    uRaymarchCameraDepth
+  );
+  vec3 raymarchDirection = vec3(0.0, 0.0, -1.0);
+  vec3 raymarchHitPosition = raymarchOrigin;
+  vec3 raymarchNormal = mercuryNormal;
+  vec3 raymarchReflection = mercuryEnvironment;
+  vec3 raymarchedMercuryColor = mercuryColor;
+  float raymarchHit = 0.0;
+  float raymarchDistance = 1000.0;
+  float raymarchMinimumDistance = 1000.0;
+  float raymarchStepCount = 0.0;
+  float raymarchTravel = max(
+    uRaymarchCameraDepth - uRaymarchNearDepth,
+    0.0
+  );
+  float raymarchMaximumTravel = max(
+    uRaymarchCameraDepth - uRaymarchFarDepth,
+    raymarchTravel
+  );
+
+  if (
+    mercuryShellMask >= uRaymarchShellEarlyOut
+    && uRaymarchPrimitiveCount > 0.5
+  ) {
+    for (int rayStep = 0; rayStep < RAYMARCH_MAX_STEPS; rayStep++) {
+      raymarchHitPosition = raymarchOrigin
+        + raymarchDirection * raymarchTravel;
+      raymarchDistance = raymarchSceneDistance(raymarchHitPosition);
+      raymarchMinimumDistance = min(
+        raymarchMinimumDistance,
+        abs(raymarchDistance)
+      );
+      raymarchStepCount = float(rayStep + 1);
+      if (abs(raymarchDistance) <= uRaymarchHitEpsilon) {
+        raymarchHit = 1.0;
+        break;
+      }
+      raymarchTravel += clamp(
+        abs(raymarchDistance),
+        uRaymarchMinimumStep,
+        uRaymarchMaximumStep
+      );
+      if (
+        raymarchTravel > raymarchMaximumTravel
+        || raymarchHitPosition.z < uRaymarchFarDepth
+      ) break;
+    }
+  }
+
+  if (raymarchHit > 0.5) {
+    raymarchNormal = raymarchSceneNormal(raymarchHitPosition);
+    vec3 raymarchReflectionDirection = reflect(
+      -viewDirection,
+      raymarchNormal
+    );
+#ifdef USE_MERCURY_SURFACE_POLISH
+    raymarchReflection = buildPolishedStudioEnvironment(
+      raymarchReflectionDirection
+    );
+#ifdef USE_MERCURY_MICRO_REFLECTION
+    raymarchReflection *= 1.0
+      + sin(
+        (vUv.x + vUv.y) * 18.0
+          + rawFieldValue * 2.0
+          + mercuryHeight * 4.0
+      ) * uMercuryMicroReflectionStrength;
+#endif
+    vec3 raymarchBase = mix(
+      mercuryBodyColor,
+      raymarchReflection,
+      uMercuryReflectionStrength
+    );
+    float raymarchBroadSpecular = pow(
+      max(
+        dot(
+          reflect(-uMetaballLightDirection, raymarchNormal),
+          viewDirection
+        ),
+        0.0
+      ),
+      uMercuryBroadSpecularPower
+    );
+    float raymarchSharpSpecular = pow(
+      max(
+        dot(
+          reflect(-uMercurySharpLightDirection, raymarchNormal),
+          viewDirection
+        ),
+        0.0
+      ),
+      uMercurySharpSpecularPower
+    );
+    float raymarchFresnel = pow(
+      1.0 - max(dot(raymarchNormal, viewDirection), 0.0),
+      uMercuryFresnelPower
+    ) * thicknessFresnelModulation * uMercuryFresnelStrength;
+    raymarchedMercuryColor = min(
+      raymarchBase
+        + uMercuryPrimaryHighlight
+          * raymarchBroadSpecular
+          * uMercuryBroadSpecularStrength
+        + uMercuryPrimaryHighlight
+          * raymarchSharpSpecular
+          * uMercurySharpSpecularStrength
+        + uMercuryPrimaryHighlight
+          * curvatureHighlight
+          * uMercuryCurvatureStrength
+        + uMercurySecondaryHighlight * raymarchFresnel,
+      vec3(0.94)
+    );
+#else
+    raymarchReflection = proceduralStudioReflection(
+      raymarchReflectionDirection
+    );
+    vec3 raymarchBase = mix(
+      uMercuryDarkColor,
+      raymarchReflection,
+      uMercuryReflectionStrength
+    );
+    float raymarchFresnel = pow(
+      1.0 - max(dot(raymarchNormal, viewDirection), 0.0),
+      uMercuryFresnelPower
+    );
+    float raymarchSpecular = pow(
+      max(
+        dot(
+          reflect(-uMetaballLightDirection, raymarchNormal),
+          viewDirection
+        ),
+        0.0
+      ),
+      uMercurySpecularPower
+    );
+    raymarchedMercuryColor = min(
+      raymarchBase
+        + uMercuryPrimaryHighlight
+          * raymarchSpecular
+          * uMercurySpecularStrength
+        + uMercurySecondaryHighlight
+          * raymarchFresnel
+          * uMercuryFresnelStrength,
+      vec3(0.96)
+    );
+#endif
+  }
+
+  float raymarchEnvelope = raymarchHit > 0.5
+    ? temporalSourceEnvelope(vUv)
+    : 0.0;
+  float raymarchVisibility = raymarchHit
+    * mercuryShellMask
+    * raymarchEnvelope;
+  float raymarchWeight = raymarchVisibility * uRaymarchBlend;
+  baseWithShell += (
+    raymarchedMercuryColor - mercuryColor
+  ) * raymarchWeight * mercuryShellOnly * uMercuryShellOpacity;
+#endif
   vec3 helmetCore = mix(
     baseWithShell,
     shadedHelmet,
@@ -704,6 +976,75 @@ void main() {
     );
   }
 #endif
+#ifdef USE_RAYMARCHED_MERCURY
+  if (uRaymarchDebugView > 0.5 && uRaymarchDebugView < 1.5) {
+    float projectedDistance = raymarchSceneDistance(
+      vec3(raymarchLocalUv, 0.0)
+    );
+    float primitiveCoverage = 1.0 - smoothstep(
+      0.0,
+      max(uRaymarchMaximumStep, 0.0001),
+      max(projectedDistance, 0.0)
+    );
+    outputColor = vec4(vec3(primitiveCoverage), 1.0);
+  } else if (
+    uRaymarchDebugView > 1.5
+    && uRaymarchDebugView < 2.5
+  ) {
+    outputColor = vec4(vec3(raymarchHit), 1.0);
+  } else if (
+    uRaymarchDebugView > 2.5
+    && uRaymarchDebugView < 3.5
+  ) {
+    float distanceDisplay = 1.0 - clamp(
+      raymarchMinimumDistance / max(uRaymarchMaximumStep, 0.0001),
+      0.0,
+      1.0
+    );
+    outputColor = vec4(vec3(distanceDisplay), 1.0);
+  } else if (
+    uRaymarchDebugView > 3.5
+    && uRaymarchDebugView < 4.5
+  ) {
+    outputColor = vec4(
+      vec3(raymarchStepCount / float(RAYMARCH_MAX_STEPS)),
+      1.0
+    );
+  } else if (
+    uRaymarchDebugView > 4.5
+    && uRaymarchDebugView < 5.5
+  ) {
+    outputColor = vec4(
+      (raymarchNormal * 0.5 + 0.5) * raymarchHit,
+      1.0
+    );
+  } else if (
+    uRaymarchDebugView > 5.5
+    && uRaymarchDebugView < 6.5
+  ) {
+    outputColor = vec4(
+      raymarchReflection * raymarchVisibility,
+      1.0
+    );
+  } else if (
+    uRaymarchDebugView > 6.5
+    && uRaymarchDebugView < 7.5
+  ) {
+    vec3 hybridComparison = mix(
+      mercuryColor,
+      raymarchedMercuryColor,
+      raymarchVisibility * uRaymarchBlend
+    );
+    outputColor = vec4(
+      mix(
+        mercuryColor,
+        hybridComparison,
+        step(0.5, vUv.x)
+      ) * mercuryShellMask,
+      1.0
+    );
+  }
+#endif
 #endif
 
   gl_FragColor = outputColor;
@@ -726,6 +1067,17 @@ export function compileMercuryShaderWithFallback(
     fragmentShader,
   ) => {
     const fragmentSource = context.getShaderSource(fragmentShader) ?? "";
+    if (
+      fragmentSource.includes(
+        "#define USE_RAYMARCHED_MERCURY 1",
+      )
+      && material.defines?.USE_RAYMARCHED_MERCURY
+    ) {
+      delete material.defines.USE_RAYMARCHED_MERCURY;
+      material.needsUpdate = true;
+      mercuryShaderVariantFailed = true;
+      return;
+    }
     if (
       fragmentSource.includes(
         "#define USE_MERCURY_SURFACE_POLISH 1",

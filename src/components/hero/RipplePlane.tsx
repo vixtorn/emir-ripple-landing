@@ -3,8 +3,9 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2, Vector3 } from "three";
-import { mercuryDebugViews, mercurySurfaceDebugViews, metaballDebugViews, rippleConfig, temporalDebugViews } from "@/lib/ripple-config";
+import { mercuryDebugViews, mercurySurfaceDebugViews, metaballDebugViews, raymarchDebugViews, rippleConfig, temporalDebugViews } from "@/lib/ripple-config";
 import { createGpuMetaballField, disposeGpuMetaballField, renderGpuMetaballField, setGpuMetaballSplat } from "@/lib/metaball-gpu-field";
+import { clearRaymarchPrimitiveBuffer, createRaymarchPrimitiveBuffer, disposeRaymarchPrimitiveBuffer, updateRaymarchPrimitiveBuffer } from "@/lib/raymarch-primitives";
 import { compileMercuryShaderWithFallback, rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
 import { clearTemporalMetaballField, createTemporalMetaballField, disposeTemporalMetaballField, renderTemporalMetaballField } from "@/lib/temporal-metaball-field";
 import { containedSize, markTextureForUpdate, prepareMetaballFieldBrush, prepareTrailBrush, resizeMetaballField, resizeTrail, stampMetaballField, stampTrail, textureDimensions, type TrailPoint } from "@/lib/trail-canvas";
@@ -24,17 +25,22 @@ const mercuryDebugView = process.env.NODE_ENV === "development"
 const mercurySurfaceDebugView = process.env.NODE_ENV === "development"
   ? rippleConfig.mercurySurfaceDebugView
   : "final";
+const raymarchDebugView = process.env.NODE_ENV === "development"
+  ? rippleConfig.raymarchDebugView
+  : "final";
 
 class TrailPointRingBuffer {
   private readonly points: Array<TrailPoint | undefined>;
   private head = 0;
   count = 0;
+  revision = 0;
 
   constructor(private readonly capacity: number) {
     this.points = new Array<TrailPoint | undefined>(capacity);
   }
 
   append(point: TrailPoint) {
+    this.revision += 1;
     if (this.count === this.capacity) {
       this.points[this.head] = point;
       this.head = (this.head + 1) % this.capacity;
@@ -50,6 +56,7 @@ class TrailPointRingBuffer {
 
   removeOldest() {
     if (this.count === 0) return;
+    this.revision += 1;
     this.points[this.head] = undefined;
     this.head = (this.head + 1) % this.capacity;
     this.count -= 1;
@@ -160,6 +167,31 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     && rippleConfig.mercuryMicroReflectionStrength > 0;
   const useMercuryEdgeRefraction = useMercurySurfacePolish
     && rippleConfig.mercuryEdgeRefractionStrength > 0;
+  const raymarchFinePointerAvailable = useMemo(
+    () => !rippleConfig.raymarchFinePointerOnly || (
+      typeof window !== "undefined"
+      && window.matchMedia("(pointer: fine)").matches
+    ),
+    [],
+  );
+  const raymarchPrimitiveBuffer = useMemo(
+    () => (
+      rippleConfig.mercuryRenderMode === "raymarchedSdf"
+      && useMercuryShell
+      && raymarchFinePointerAvailable
+    )
+      ? createRaymarchPrimitiveBuffer(
+        gl,
+        rippleConfig.raymarchMaxSegments,
+        rippleConfig.maxTrailPoints,
+      )
+      : null,
+    [gl, raymarchFinePointerAvailable, useMercuryShell],
+  );
+  const useRaymarchedMercury = (
+    rippleConfig.mercuryRenderMode === "raymarchedSdf"
+    && raymarchPrimitiveBuffer !== null
+  );
   const initialMetaballFieldTexture = useTemporalMetaballField
     ? temporalMetaballField.currentTarget.texture
     : sourceMetaballFieldTexture;
@@ -169,6 +201,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
   const metaballFieldUniform = useRef({ value: initialMetaballFieldTexture });
   const temporalPointerUvUniform = useRef({ value: new Vector2(0.5, 0.5) });
   const temporalVelocityUniform = useRef({ value: new Vector2() });
+  const raymarchPrimitiveCountUniform = useRef({ value: 0 });
   const material = useMemo(() => new ShaderMaterial({
     transparent: true,
     defines: useMercuryShell ? {
@@ -182,6 +215,11 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       ...(useMercuryEdgeRefraction
         ? { USE_MERCURY_EDGE_REFRACTION: 1 }
         : {}),
+      ...(useRaymarchedMercury ? {
+        USE_RAYMARCHED_MERCURY: 1,
+        RAYMARCH_MAX_SEGMENTS: rippleConfig.raymarchMaxSegments,
+        RAYMARCH_MAX_STEPS: rippleConfig.raymarchMaxSteps,
+      } : {}),
     } : undefined,
     vertexShader: rippleVertexShader,
     fragmentShader: rippleFragmentShader,
@@ -246,6 +284,23 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMercuryMicroReflectionStrength: { value: rippleConfig.mercuryMicroReflectionStrength },
       uMercuryEdgeRefractionStrength: { value: rippleConfig.mercuryEdgeRefractionStrength },
       uMercurySurfaceDebugView: { value: mercurySurfaceDebugViews[mercurySurfaceDebugView] },
+      uRaymarchPrimitives: { value: raymarchPrimitiveBuffer?.texture ?? metaballFieldTexture },
+      uRaymarchPrimitiveCount: { value: 0 },
+      uRaymarchPrimitiveTexelSize: { value: 1 / (rippleConfig.raymarchMaxSegments * 2) },
+      uPortraitAspect: { value: imageAspect },
+      uRaymarchSmoothUnion: { value: rippleConfig.raymarchSmoothUnion },
+      uRaymarchDepthScale: { value: rippleConfig.raymarchDepthScale },
+      uRaymarchCameraDepth: { value: rippleConfig.raymarchCameraDepth },
+      uRaymarchNearDepth: { value: rippleConfig.raymarchNearDepth },
+      uRaymarchFarDepth: { value: rippleConfig.raymarchFarDepth },
+      uRaymarchHitEpsilon: { value: rippleConfig.raymarchHitEpsilon },
+      uRaymarchNormalEpsilon: { value: rippleConfig.raymarchNormalEpsilon },
+      uRaymarchMinimumStep: { value: rippleConfig.raymarchMinimumStep },
+      uRaymarchMaximumStep: { value: rippleConfig.raymarchMaximumStep },
+      uRaymarchShellEarlyOut: { value: rippleConfig.raymarchShellEarlyOut },
+      uRaymarchBlend: { value: rippleConfig.raymarchBlend },
+      uRaymarchVelocityBulgeStrength: { value: rippleConfig.raymarchVelocityBulgeStrength },
+      uRaymarchDebugView: { value: raymarchDebugViews[raymarchDebugView] },
       uMetaballHeightBaseThreshold: { value: rippleConfig.metaballHeightBaseThreshold },
       uMetaballHeightCompression: { value: rippleConfig.metaballHeightCompression },
       uRevealMode: { value: rippleConfig.revealMode === "metaball" ? 1 : 0 },
@@ -264,7 +319,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uMetaballPrimaryHighlight: { value: new Color(rippleConfig.metaballPrimaryHighlight) },
       uMetaballSecondaryHighlight: { value: new Color(rippleConfig.metaballSecondaryHighlight) },
     },
-  }), [baseTexture, helmetTexture, initialMetaballFieldTexture, sourceMetaballFieldHeight, sourceMetaballFieldTexture, sourceMetaballFieldWidth, trailTexture, useGpuMetaballField, useMercuryEdgeRefraction, useMercuryMicroReflection, useMercuryShell, useMercurySurfacePolish]);
+  }), [baseTexture, helmetTexture, imageAspect, initialMetaballFieldTexture, metaballFieldTexture, raymarchPrimitiveBuffer, sourceMetaballFieldHeight, sourceMetaballFieldTexture, sourceMetaballFieldWidth, trailTexture, useGpuMetaballField, useMercuryEdgeRefraction, useMercuryMicroReflection, useMercuryShell, useMercurySurfacePolish, useRaymarchedMercury]);
   const lifecycle = useRef({
     canvasHasMask: false,
     fieldHasDensity: false,
@@ -294,6 +349,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     metaballFieldUniform.current = material.uniforms.uMetaballField;
     temporalPointerUvUniform.current = material.uniforms.uTemporalPointerUv;
     temporalVelocityUniform.current = material.uniforms.uTemporalVelocity;
+    raymarchPrimitiveCountUniform.current = material.uniforms.uRaymarchPrimitiveCount;
   }, [material]);
   useLayoutEffect(() => {
     if (!useMercuryShell) return;
@@ -305,6 +361,13 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     prepareTrailBrush(trailBrush, rippleConfig.radius * trailCanvas.height);
     prepareMetaballFieldBrush(metaballFieldBrush, rippleConfig.radius * metaballFieldCanvas.height);
     trailPoints.clear();
+    if (raymarchPrimitiveBuffer) {
+      clearRaymarchPrimitiveBuffer(
+        raymarchPrimitiveBuffer,
+        trailPoints.revision,
+      );
+      raymarchPrimitiveCountUniform.current.value = 0;
+    }
     lifecycle.current.canvasHasMask = false;
     lifecycle.current.fieldHasDensity = false;
     lifecycle.current.temporalHasDensity = false;
@@ -320,7 +383,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     }
     markTextureForUpdate(trailTexture);
     markTextureForUpdate(metaballFieldTexture);
-  }, [gl, imageAspect, metaballFieldBrush, metaballFieldCanvas, metaballFieldTexture, pointer, sourceMetaballFieldTexture, temporalMetaballField, trailBrush, trailCanvas, trailPoints, trailTexture]);
+  }, [gl, imageAspect, metaballFieldBrush, metaballFieldCanvas, metaballFieldTexture, pointer, raymarchPrimitiveBuffer, sourceMetaballFieldTexture, temporalMetaballField, trailBrush, trailCanvas, trailPoints, trailTexture]);
   useEffect(() => {
     revealModeUniform.current.value = rippleConfig.revealMode === "metaball"
       && (useGpuMetaballField || Boolean(metaballFieldContext.current))
@@ -329,11 +392,12 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     return () => {
       trailTexture.dispose();
       metaballFieldTexture.dispose();
+      if (raymarchPrimitiveBuffer) disposeRaymarchPrimitiveBuffer(raymarchPrimitiveBuffer);
       if (temporalMetaballField) disposeTemporalMetaballField(temporalMetaballField);
       if (gpuMetaballField) disposeGpuMetaballField(gpuMetaballField);
       material.dispose();
     };
-  }, [gpuMetaballField, material, metaballFieldTexture, temporalMetaballField, trailTexture, useGpuMetaballField]);
+  }, [gpuMetaballField, material, metaballFieldTexture, raymarchPrimitiveBuffer, temporalMetaballField, trailTexture, useGpuMetaballField]);
   useEffect(() => {
     const clearHiddenFields = () => {
       if (!document.hidden) return;
@@ -346,6 +410,10 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
         clearTemporalMetaballField(gl, temporalMetaballField);
         metaballFieldUniform.current.value = temporalMetaballField.currentTarget.texture;
       }
+      if (raymarchPrimitiveBuffer) {
+        clearRaymarchPrimitiveBuffer(raymarchPrimitiveBuffer, -1);
+        raymarchPrimitiveCountUniform.current.value = 0;
+      }
       markTextureForUpdate(trailTexture);
       markTextureForUpdate(metaballFieldTexture);
       lifecycle.current.canvasHasMask = false;
@@ -356,10 +424,14 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     };
     document.addEventListener("visibilitychange", clearHiddenFields);
     return () => document.removeEventListener("visibilitychange", clearHiddenFields);
-  }, [gl, gpuMetaballField, metaballFieldCanvas, metaballFieldTexture, pointer, temporalMetaballField, trailCanvas, trailTexture]);
+  }, [gl, gpuMetaballField, metaballFieldCanvas, metaballFieldTexture, pointer, raymarchPrimitiveBuffer, temporalMetaballField, trailCanvas, trailTexture]);
   useEffect(() => {
     const resetTemporalResources = () => {
       resetTemporalMotion(temporalMotion.current, pointer.current.movementId);
+      if (raymarchPrimitiveBuffer) {
+        clearRaymarchPrimitiveBuffer(raymarchPrimitiveBuffer, -1);
+        raymarchPrimitiveCountUniform.current.value = 0;
+      }
       if (!temporalMetaballField) return;
       clearTemporalMetaballField(gl, temporalMetaballField);
       metaballFieldUniform.current.value = temporalMetaballField.currentTarget.texture;
@@ -373,7 +445,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       window.removeEventListener("resize", resetTemporalResources);
       canvas.removeEventListener("webglcontextrestored", resetTemporalResources);
     };
-  }, [gl, pointer, temporalMetaballField]);
+  }, [gl, pointer, raymarchPrimitiveBuffer, temporalMetaballField]);
 
   useFrame((_, frameDeltaSeconds) => {
     const ctx = context.current;
@@ -389,6 +461,8 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       && useMercuryShell;
     const debugMercurySurfaceStage = mercurySurfaceDebugView !== "final"
       && useMercurySurfacePolish;
+    const debugRaymarchStage = raymarchDebugView !== "final"
+      && useRaymarchedMercury;
     revealModeUniform.current.value = metaballEnabled ? 1 : 0;
     const drawClassicMask = !metaballEnabled || compareModes || debugClassic;
     const drawMetaballField = (metaballEnabled && !debugClassic)
@@ -396,7 +470,8 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       || debugMetaballStage
       || debugTemporalStage
       || debugMercuryStage
-      || debugMercurySurfaceStage;
+      || debugMercurySurfaceStage
+      || debugRaymarchStage;
     const trail = lifecycle.current;
     const currentPointer = pointer.current;
     const nowMs = performance.now();
@@ -550,6 +625,20 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       if (ageMs < rippleConfig.trailPointLifetimeMs && pointAlpha(oldest, nowMs) >= rippleConfig.trailVisibilityCutoff) break;
       trailPoints.removeOldest();
       oldest = trailPoints.oldest();
+    }
+
+    if (raymarchPrimitiveBuffer) {
+      updateRaymarchPrimitiveBuffer(
+        raymarchPrimitiveBuffer,
+        trailPoints,
+        trailCanvas.width,
+        trailCanvas.height,
+        imageAspect,
+        rippleConfig.trailIdleTimeoutMs,
+        rippleConfig.trailInterpolationSpacingPx,
+      );
+      raymarchPrimitiveCountUniform.current.value =
+        raymarchPrimitiveBuffer.primitiveCount;
     }
 
     if (trailPoints.count === 0) {

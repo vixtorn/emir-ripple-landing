@@ -47,6 +47,17 @@ export const mercurySurfaceDebugViews = {
   material: 7,
 } as const;
 
+export const raymarchDebugViews = {
+  final: 0,
+  primitiveCoverage: 1,
+  hit: 2,
+  distance: 3,
+  steps: 4,
+  normal: 5,
+  reflection: 6,
+  hybridComparison: 7,
+} as const;
+
 export const rippleConfig = {
   trailResolution: 768,
   radius: 0.09,
@@ -120,6 +131,23 @@ export const rippleConfig = {
   mercuryMicroReflectionStrength: 0,
   mercuryEdgeRefractionStrength: 0,
   mercurySurfaceDebugView: "final" as keyof typeof mercurySurfaceDebugViews,
+  mercuryRenderMode: "raymarchedSdf" as "surface2D" | "raymarchedSdf",
+  raymarchMaxSegments: 32,
+  raymarchSmoothUnion: 0.018,
+  raymarchDepthScale: 0.9,
+  raymarchCameraDepth: 0.3,
+  raymarchNearDepth: 0.14,
+  raymarchFarDepth: -0.14,
+  raymarchMaxSteps: 48,
+  raymarchHitEpsilon: 0.002,
+  raymarchNormalEpsilon: 0.003,
+  raymarchMinimumStep: 0.001,
+  raymarchMaximumStep: 0.035,
+  raymarchShellEarlyOut: 0.01,
+  raymarchBlend: 1,
+  raymarchFinePointerOnly: true,
+  raymarchVelocityBulgeStrength: 0,
+  raymarchDebugView: "final" as keyof typeof raymarchDebugViews,
   metaballThreshold: 0.38,
   metaballSoftness: 0.11,
   metaballFieldStrength: 0.9,
