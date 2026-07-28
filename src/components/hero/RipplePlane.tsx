@@ -2,13 +2,14 @@
 
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
-import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2 } from "three";
-import { rippleConfig, rippleEdgePalettes } from "@/lib/ripple-config";
+import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2, Vector3 } from "three";
+import { rippleConfig, rippleEdgePalettes, rippleGradientMapPalette } from "@/lib/ripple-config";
 import { rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
 import { containedSize, markTextureForUpdate, prepareTrailBrush, resizeTrail, stampTrail, textureDimensions, type TrailPoint } from "@/lib/trail-canvas";
 import type { PointerData } from "./RippleScene";
 
 const edgePalette = rippleEdgePalettes[rippleConfig.rippleEdgeTheme];
+const gradientPalette = rippleGradientMapPalette;
 
 class TrailPointRingBuffer {
   private readonly points: Array<TrailPoint | undefined>;
@@ -84,18 +85,39 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uEdgePrimary: { value: new Color(edgePalette.primary) },
       uEdgeHighlight: { value: new Color(edgePalette.highlight) },
       uEdgeAccent: { value: new Color(edgePalette.accent) },
-      uEdgeThreshold: { value: rippleConfig.rippleEdgeThreshold },
-      uEdgeWidth: { value: rippleConfig.rippleEdgeWidth },
-      uEdgeStrength: { value: rippleConfig.rippleEdgeStrength },
-      uGlowWidth: { value: rippleConfig.rippleGlowWidth },
-      uGlowStrength: { value: rippleConfig.rippleGlowStrength },
-      uFlowSpeed: { value: rippleConfig.rippleFlowSpeed },
-      uFlowFrequency: { value: new Vector2(rippleConfig.rippleFlowFrequency.x, rippleConfig.rippleFlowFrequency.y) },
-      uNoiseAmount: { value: rippleConfig.rippleNoiseAmount },
-      uHighlightSharpness: { value: rippleConfig.rippleHighlightSharpness },
+      uGradientDark: { value: new Color(gradientPalette.dark) },
+      uGradientPurple: { value: new Color(gradientPalette.purple) },
+      uGradientPink: { value: new Color(gradientPalette.pink) },
+      uGradientLight: { value: new Color(gradientPalette.light) },
+      uGradientMapStops: { value: new Vector3(rippleConfig.gradientMapStops.darkEnd, rippleConfig.gradientMapStops.purple, rippleConfig.gradientMapStops.pink) },
+      uGradientMapEnabled: { value: rippleConfig.gradientMapEnabled ? 1 : 0 },
+      uGradientMapMix: { value: rippleConfig.gradientMapMix },
+      uGradientMapPhase: { value: rippleConfig.gradientMapPhase },
+      uGradientMapScale: { value: rippleConfig.gradientMapScale },
+      uGradientMapFlowSpeed: { value: rippleConfig.gradientMapFlowSpeed },
+      uGradientMapDriftAmount: { value: rippleConfig.gradientMapDriftAmount },
+      uTrailTexelSize: { value: new Vector2(1 / Math.round(rippleConfig.trailResolution * imageAspect), 1 / rippleConfig.trailResolution) },
+      uMaskBlurRadiusPx: { value: rippleConfig.maskBlurRadiusPx },
+      uEdgeThreshold: { value: rippleConfig.edgeThreshold },
+      uEdgeWidth: { value: rippleConfig.edgeWidth },
+      uEdgeStrength: { value: rippleConfig.edgeStrength },
+      uAuraWidth: { value: rippleConfig.auraWidth },
+      uAuraStrength: { value: rippleConfig.auraStrength },
+      uAuraVioletMix: { value: rippleConfig.auraVioletMix },
+      uNoiseScale: { value: rippleConfig.noiseScale },
+      uNoiseSpeed: { value: rippleConfig.noiseSpeed },
+      uNoiseAmount: { value: rippleConfig.noiseAmount },
+      uDistortionStrength: { value: rippleConfig.distortionStrength },
+      uAuraDistortionInfluence: { value: rippleConfig.auraDistortionInfluence },
+      uChromaticOffset: { value: rippleConfig.chromaticOffset },
+      uChromaticStrength: { value: rippleConfig.chromaticStrength },
+      uChromaticAuraInfluence: { value: rippleConfig.chromaticAuraInfluence },
+      uEdgeFlowSpeed: { value: rippleConfig.edgeFlowSpeed },
+      uEdgeFlowFrequency: { value: new Vector2(rippleConfig.edgeFlowFrequency.x, rippleConfig.edgeFlowFrequency.y) },
+      uEdgeHighlightSharpness: { value: rippleConfig.edgeHighlightSharpness },
       uTime: { value: 0 },
     },
-  }), [baseTexture, helmetTexture, trailTexture]);
+  }), [baseTexture, helmetTexture, imageAspect, trailTexture]);
   const lifecycle = useRef({
     canvasHasMask: false,
     hasLastStamp: false,
