@@ -7,7 +7,13 @@ import { portraitAssets } from "@/lib/ripple-config";
 import { configureColorTexture, textureDimensions } from "@/lib/trail-canvas";
 import RipplePlane from "./RipplePlane";
 
-export type PointerData = { u: number; v: number; active: boolean };
+export type PointerData = {
+  u: number;
+  v: number;
+  active: boolean;
+  movementId: number;
+  lastMovementTime: number;
+};
 const textureUrls = [portraitAssets.baseTexture, portraitAssets.helmetTexture];
 
 export default function RippleScene({ pointer, onTextureDimensions, onReady }: { pointer: React.MutableRefObject<PointerData>; onTextureDimensions: (base: { width: number; height: number }, helmet: { width: number; height: number }) => void; onReady: () => void }) {

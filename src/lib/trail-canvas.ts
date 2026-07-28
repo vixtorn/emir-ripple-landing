@@ -10,7 +10,28 @@ export function containedSize(containerWidth: number, containerHeight: number, i
     ? { width: containerWidth, height: containerWidth / imageAspect }
     : { width: containerHeight * imageAspect, height: containerHeight };
 }
-export function resizeTrail(canvas: HTMLCanvasElement, imageAspect: number) { canvas.height = rippleConfig.trailResolution; canvas.width = Math.round(canvas.height * imageAspect); return canvas.getContext("2d", { alpha: true }); }
+export function resizeTrail(canvas: HTMLCanvasElement, imageAspect: number) {
+  canvas.height = rippleConfig.trailResolution;
+  canvas.width = Math.round(canvas.height * imageAspect);
+  const context = canvas.getContext("2d", { alpha: true });
+  context?.clearRect(0, 0, canvas.width, canvas.height);
+  return context;
+}
+export function prepareTrailBrush(canvas: HTMLCanvasElement, radius: number) {
+  const size = Math.ceil(radius * 2);
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!context) return;
+  context.clearRect(0, 0, size, size);
+  const center = size / 2;
+  const gradient = context.createRadialGradient(center, center, 0, center, center, radius);
+  gradient.addColorStop(0, "rgba(255,255,255,.95)");
+  gradient.addColorStop(rippleConfig.hardness, "rgba(255,255,255,.7)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+}
 export function fadeTrail(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, amount: number) { ctx.save(); ctx.globalCompositeOperation = "destination-out"; ctx.fillStyle = `rgba(0,0,0,${amount})`; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore(); }
-export function stampTrail(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, x: number, y: number, radius: number) { const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius); gradient.addColorStop(0, "rgba(255,255,255,.95)"); gradient.addColorStop(rippleConfig.hardness, "rgba(255,255,255,.7)"); gradient.addColorStop(1, "rgba(255,255,255,0)"); ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill(); }
+export function stampTrail(ctx: CanvasRenderingContext2D, brush: HTMLCanvasElement, x: number, y: number) { ctx.drawImage(brush, x - brush.width / 2, y - brush.height / 2); }
 export function markTextureForUpdate(texture: Texture) { texture.needsUpdate = true; }
