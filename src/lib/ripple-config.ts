@@ -17,6 +17,14 @@ export const metaballDebugViews = {
   classic: 6,
 } as const;
 
+export const temporalDebugViews = {
+  final: 0,
+  source: 1,
+  feedback: 2,
+  envelope: 3,
+  velocity: 4,
+} as const;
+
 export const rippleConfig = {
   trailResolution: 768,
   radius: 0.09,
@@ -32,6 +40,19 @@ export const rippleConfig = {
   revealMode: "metaball" as "classic" | "metaball",
   metaballFieldBackend: "gpuHalfFloat" as "canvas" | "gpuHalfFloat",
   metaballFieldResolution: 384,
+  temporalViscosityEnabled: true,
+  temporalAdvectionStrength: 0.016,
+  temporalDiffusionStrength: 0.045,
+  temporalDissipationPerSecond: 1.8,
+  temporalInjectionStrength: 1,
+  temporalSourceAttraction: 0.22,
+  temporalVelocitySmoothingPerSecond: 12,
+  temporalVelocityInfluenceRadius: 0.15,
+  temporalMaxVelocity: 2.5,
+  temporalEnvelopeThreshold: 0.035,
+  temporalEnvelopeSoftness: 0.025,
+  temporalFieldDebugExposure: 0.7,
+  temporalDebugView: "final" as keyof typeof temporalDebugViews,
   metaballThreshold: 0.38,
   metaballSoftness: 0.11,
   metaballFieldStrength: 0.9,

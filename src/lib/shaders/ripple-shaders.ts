@@ -11,9 +11,18 @@ uniform sampler2D uBaseTexture;
 uniform sampler2D uHelmetTexture;
 uniform sampler2D uTrailTexture;
 uniform sampler2D uMetaballField;
+uniform sampler2D uTemporalSourceField;
 uniform vec2 uMetaballFieldTexelSize;
 uniform float uMetaballFieldBackend;
 uniform float uMetaballFieldDebugExposure;
+uniform float uTemporalFieldDebugExposure;
+uniform float uTemporalDebugView;
+uniform vec2 uTemporalPointerUv;
+uniform vec2 uTemporalVelocity;
+uniform float uTemporalMaxVelocity;
+uniform float uTemporalVelocityInfluenceRadius;
+uniform float uTemporalEnvelopeThreshold;
+uniform float uTemporalEnvelopeSoftness;
 uniform float uMetaballHeightBaseThreshold;
 uniform float uMetaballHeightCompression;
 uniform float uRevealMode;
@@ -36,6 +45,29 @@ varying vec2 vUv;
 float sampleField(vec2 uv) {
   vec4 fieldSample = texture2D(uMetaballField, uv);
   return mix(fieldSample.a, fieldSample.r, uMetaballFieldBackend);
+}
+
+float sampleTemporalSource(vec2 uv) {
+  vec4 fieldSample = texture2D(
+    uTemporalSourceField,
+    clamp(uv, vec2(0.0), vec2(1.0))
+  );
+  return mix(fieldSample.a, fieldSample.r, uMetaballFieldBackend);
+}
+
+float temporalSourceEnvelope(vec2 uv) {
+  float source = sampleTemporalSource(uv);
+  float blurredSource = source * 0.5 + (
+    sampleTemporalSource(uv - vec2(uMetaballFieldTexelSize.x, 0.0))
+    + sampleTemporalSource(uv + vec2(uMetaballFieldTexelSize.x, 0.0))
+    + sampleTemporalSource(uv - vec2(0.0, uMetaballFieldTexelSize.y))
+    + sampleTemporalSource(uv + vec2(0.0, uMetaballFieldTexelSize.y))
+  ) * 0.125;
+  return smoothstep(
+    uTemporalEnvelopeThreshold - uTemporalEnvelopeSoftness,
+    uTemporalEnvelopeThreshold + uTemporalEnvelopeSoftness,
+    blurredSource
+  );
 }
 
 float heightFromField(float density) {
@@ -151,6 +183,40 @@ void main() {
     outputColor = vec4(normalColor * metaballMask, 1.0);
   } else if (uMetaballDebugView < 5.5 && uMetaballDebugView > 4.5) {
     outputColor = vec4(clamp(lightingOnly * metaballMask, 0.0, 1.0), 1.0);
+  }
+
+  if (uTemporalDebugView > 0.5 && uTemporalDebugView < 1.5) {
+    float sourceDisplayDensity = 1.0 - exp(
+      -sampleTemporalSource(vUv) * uTemporalFieldDebugExposure
+    );
+    outputColor = vec4(vec3(sourceDisplayDensity), 1.0);
+  } else if (uTemporalDebugView > 1.5 && uTemporalDebugView < 2.5) {
+    float feedbackDisplayDensity = 1.0 - exp(
+      -rawFieldValue * uTemporalFieldDebugExposure
+    );
+    outputColor = vec4(vec3(feedbackDisplayDensity), 1.0);
+  } else if (uTemporalDebugView > 2.5 && uTemporalDebugView < 3.5) {
+    outputColor = vec4(vec3(temporalSourceEnvelope(vUv)), 1.0);
+  } else if (uTemporalDebugView > 3.5 && uTemporalDebugView < 4.5) {
+    float maxVelocity = max(uTemporalMaxVelocity, 0.0001);
+    vec2 normalizedVelocity = uTemporalVelocity / maxVelocity;
+    float velocityMagnitude = clamp(length(normalizedVelocity), 0.0, 1.0);
+    vec2 pointerDelta = vUv - uTemporalPointerUv;
+    float influenceRadiusSquared = max(
+      uTemporalVelocityInfluenceRadius * uTemporalVelocityInfluenceRadius,
+      0.000001
+    );
+    float velocityInfluence = exp(
+      -dot(pointerDelta, pointerDelta) / influenceRadiusSquared
+    );
+    vec3 velocityColor = vec3(
+      normalizedVelocity * 0.5 + 0.5,
+      velocityMagnitude
+    );
+    outputColor = vec4(
+      mix(vec3(0.5, 0.5, 0.0), velocityColor, velocityInfluence),
+      1.0
+    );
   }
 
   gl_FragColor = outputColor;
