@@ -2,11 +2,13 @@
 
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
-import { CanvasTexture, LinearFilter, ShaderMaterial, Texture } from "three";
-import { rippleConfig } from "@/lib/ripple-config";
+import { CanvasTexture, Color, LinearFilter, ShaderMaterial, Texture, Vector2 } from "three";
+import { rippleConfig, rippleEdgePalettes } from "@/lib/ripple-config";
 import { rippleFragmentShader, rippleVertexShader } from "@/lib/shaders/ripple-shaders";
 import { containedSize, markTextureForUpdate, prepareTrailBrush, resizeTrail, stampTrail, textureDimensions, type TrailPoint } from "@/lib/trail-canvas";
 import type { PointerData } from "./RippleScene";
+
+const edgePalette = rippleEdgePalettes[rippleConfig.rippleEdgeTheme];
 
 class TrailPointRingBuffer {
   private readonly points: Array<TrailPoint | undefined>;
@@ -70,6 +72,7 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     return texture;
   }, [trailCanvas]);
   const context = useRef<CanvasRenderingContext2D | null>(null);
+  const timeUniform = useRef({ value: 0 });
   const material = useMemo(() => new ShaderMaterial({
     transparent: true,
     vertexShader: rippleVertexShader,
@@ -78,6 +81,19 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
       uBaseTexture: { value: baseTexture },
       uHelmetTexture: { value: helmetTexture },
       uTrailTexture: { value: trailTexture },
+      uEdgePrimary: { value: new Color(edgePalette.primary) },
+      uEdgeHighlight: { value: new Color(edgePalette.highlight) },
+      uEdgeAccent: { value: new Color(edgePalette.accent) },
+      uEdgeThreshold: { value: rippleConfig.rippleEdgeThreshold },
+      uEdgeWidth: { value: rippleConfig.rippleEdgeWidth },
+      uEdgeStrength: { value: rippleConfig.rippleEdgeStrength },
+      uGlowWidth: { value: rippleConfig.rippleGlowWidth },
+      uGlowStrength: { value: rippleConfig.rippleGlowStrength },
+      uFlowSpeed: { value: rippleConfig.rippleFlowSpeed },
+      uFlowFrequency: { value: new Vector2(rippleConfig.rippleFlowFrequency.x, rippleConfig.rippleFlowFrequency.y) },
+      uNoiseAmount: { value: rippleConfig.rippleNoiseAmount },
+      uHighlightSharpness: { value: rippleConfig.rippleHighlightSharpness },
+      uTime: { value: 0 },
     },
   }), [baseTexture, helmetTexture, trailTexture]);
   const lifecycle = useRef({
@@ -98,11 +114,15 @@ export default function RipplePlane({ baseTexture, helmetTexture, pointer }: { b
     lifecycle.current.lastMovementId = pointer.current.movementId;
     markTextureForUpdate(trailTexture);
   }, [imageAspect, pointer, trailBrush, trailCanvas, trailPoints, trailTexture]);
-  useEffect(() => () => { trailTexture.dispose(); material.dispose(); }, [material, trailTexture]);
+  useEffect(() => {
+    timeUniform.current = material.uniforms.uTime;
+    return () => { trailTexture.dispose(); material.dispose(); };
+  }, [material, trailTexture]);
 
-  useFrame(() => {
+  useFrame(({ clock }) => {
     const ctx = context.current;
     if (!ctx) return;
+    timeUniform.current.value = clock.elapsedTime;
     const trail = lifecycle.current;
     const currentPointer = pointer.current;
     if (currentPointer.movementId !== trail.lastMovementId) {
